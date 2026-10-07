@@ -1,102 +1,34 @@
-'use strict';
-const crypto = require('crypto');
-const { q, audit } = require('./db');
-
-const COOKIE = 'ow_session';
-const SESSION_DAYS = 14;          // a session ends after this long without use
-const MAX_FAILED = 8;             // failed sign ins before the account is locked
-const LOCK_MINUTES = 15;
-const PROD = process.env.NODE_ENV === 'production';
-
-/* Passwords are stored as salted scrypt hashes, never in readable form. */
-function hashPassword(password) {
-  const salt = crypto.randomBytes(16);
-  const hash = crypto.scryptSync(password, salt, 64, { N: 16384, r: 8, p: 1 });
-  return `scrypt$16384$${salt.toString('hex')}$${hash.toString('hex')}`;
-}
-function verifyPassword(password, stored) {
-  const p = String(stored || '').split('$');
-  if (p.length !== 4 || p[0] !== 'scrypt') return false;
-  const expected = Buffer.from(p[3], 'hex');
-  const got = crypto.scryptSync(password, Buffer.from(p[2], 'hex'), expected.length, { N: Number(p[1]), r: 8, p: 1 });
-  return crypto.timingSafeEqual(expected, got);
-}
-// Used to spend the same time on unknown emails as on real ones.
-const DUMMY_HASH = hashPassword(crypto.randomBytes(12).toString('hex'));
-
-const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
-
-function readCookie(req, name) {
-  const raw = req.headers.cookie || '';
-  for (const part of raw.split(';')) {
-    const i = part.indexOf('=');
-    if (i > 0 && part.slice(0, i).trim() === name) return decodeURIComponent(part.slice(i + 1).trim());
-  }
-  return '';
-}
-function setCookie(res, token) {
-  res.cookie(COOKIE, token, { httpOnly: true, secure: PROD, sameSite: 'lax', path: '/', maxAge: SESSION_DAYS * 86400000 });
-}
-function clearCookie(res) {
-  res.clearCookie(COOKIE, { httpOnly: true, secure: PROD, sameSite: 'lax', path: '/' });
-}
-
-async function startSession(req, res, userId) {
-  const token = crypto.randomBytes(32).toString('base64url');
-  await q(`INSERT INTO sessions (user_id, token_hash, ip, user_agent, expires_at)
-           VALUES ($1,$2,$3,$4, now() + ($5 || ' days')::interval)`,
-    [userId, sha256(token), req.ip, String(req.get('user-agent') || '').slice(0, 300), String(SESSION_DAYS)]);
-  setCookie(res, token);
-}
-
-/* Finds the signed in user from the session cookie, or null. */
-async function currentUser(req, res) {
-  const token = readCookie(req, COOKIE);
-  if (!token) return null;
-  const r = await q(`SELECT s.id AS sid, u.id, u.email, u.full_name, u.avatar
-                     FROM sessions s JOIN users u ON u.id = s.user_id
-                     WHERE s.token_hash = $1 AND s.expires_at > now()`, [sha256(token)]);
-  if (!r.rows.length) { clearCookie(res); return null; }
-  // Sliding expiry: each visit pushes the end of the session back.
-  q(`UPDATE sessions SET last_seen_at = now(), expires_at = now() + ($2 || ' days')::interval
-     WHERE id = $1 AND last_seen_at < now() - interval '10 minutes'`, [r.rows[0].sid, String(SESSION_DAYS)]).catch(() => {});
-  return r.rows[0];
-}
-/* For the API: loads req.user or answers 401. */
-async function requireAuth(req, res, next) {
-  try {
-    req.user = await currentUser(req, res);
-    if (!req.user) return res.status(401).json({ error: 'Please log in.' });
-    next();
-  } catch (e) { next(e); }
-}
-
-async function login(req, res, email, password) {
-  const r = await q('SELECT id, password_hash, failed_logins, locked_until FROM users WHERE lower(email) = lower($1)', [email]);
-  const u = r.rows[0];
-  const generic = { status: 401, error: 'That email and password do not match.' };
-  if (!u) { verifyPassword(password, DUMMY_HASH); await audit(req, null, 'login_failed', { reason: 'unknown_email' }); return generic; }
-  if (u.locked_until && new Date(u.locked_until) > new Date()) {
-    await audit(req, u.id, 'login_blocked', {});
-    return { status: 429, error: `Too many attempts. Try again in ${LOCK_MINUTES} minutes.` };
-  }
-  if (!verifyPassword(password, u.password_hash)) {
-    const fails = u.failed_logins + 1;
-    await q(`UPDATE users SET failed_logins = $2::int, locked_until = CASE WHEN $2::int >= $3::int THEN now() + ($4 || ' minutes')::interval ELSE NULL END WHERE id = $1`,
-      [u.id, fails, MAX_FAILED, String(LOCK_MINUTES)]);
-    await audit(req, u.id, 'login_failed', { fails });
-    return generic;
-  }
-  await q('UPDATE users SET failed_logins = 0, locked_until = NULL, last_login_at = now() WHERE id = $1', [u.id]);
-  await startSession(req, res, u.id);
-  await audit(req, u.id, 'login', {});
-  return { status: 200 };
-}
-
-async function logout(req, res) {
-  const token = readCookie(req, COOKIE);
-  if (token) await q('DELETE FROM sessions WHERE token_hash = $1', [sha256(token)]);
-  clearCookie(res);
-}
-
-module.exports = { hashPassword, verifyPassword, currentUser, requireAuth, login, logout, startSession, clearCookie, sha256 };
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Choose a new password | Outwork</title>
+<meta name="robots" content="noindex">
+<meta name="referrer" content="same-origin">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
+<link rel="stylesheet" href="outwork.css">
+<link rel="stylesheet" href="dashboard.css">
+</head>
+<body data-page="reset">
+<nav class="nav"><div class="wrap-w nav-in"><a class="brand" href="index.html"><i><svg viewBox="0 0 24 24"><path d="M4 20l6-16 4 9 2-4 4 11z"/></svg></i>Outwork</a>
+<div class="nav-right"><a class="nav-link" href="signup.html">Sign up</a></div></div></nav>
+<main class="auth-page">
+  <div class="auth-side band--orange ptsec"><div class="ptsec-bg" aria-hidden="true"><svg viewBox="0 0 1600 1400" preserveAspectRatio="xMidYMid slice"><g transform="translate(1180 520) rotate(-18)"><rect class="field" x="-310" y="-125" width="620" height="250" rx="125"/><rect class="lane" x="-310" y="-125" width="620" height="250" rx="125"/><rect class="lane" x="-425" y="-240" width="850" height="480" rx="240"/><rect class="lane lane--k" x="-540" y="-355" width="1080" height="710" rx="355"/><rect class="lane" x="-655" y="-470" width="1310" height="940" rx="470"/><rect class="lane" x="-770" y="-585" width="1540" height="1170" rx="585"/><rect class="lane lane--k" x="-885" y="-700" width="1770" height="1400" rx="700"/><rect class="lane" x="-1000" y="-815" width="2000" height="1630" rx="815"/><rect class="lane" x="-1115" y="-930" width="2230" height="1860" rx="930"/><rect class="runner " pathLength="1000" x="-425" y="-240" width="850" height="480" rx="240"/><rect class="runner runner--k" pathLength="1000" x="-770" y="-585" width="1540" height="1170" rx="585"/><rect class="runner " pathLength="1000" x="-1000" y="-815" width="2000" height="1630" rx="815"/></g></svg></div>
+    <div><h1 class="h-xl">Almost there.</h1><p class="lede">Pick a new password for your account.</p></div>
+  </div>
+  <div class="auth-main">
+    <!-- A plain form. It posts straight to the server over HTTPS. No script touches the password. -->
+    <form class="auth" method="post" action="/account/reset">
+      <p class="ok-box" id="formOk" role="status" hidden></p>
+      <h2 class="h-md">Choose a new password</h2>
+      <div class="field"><label for="a-pass">New password</label><input class="input" id="a-pass" name="password" type="password" minlength="10" maxlength="200" autocomplete="new-password" required><p class="hint">At least 10 characters.</p></div><input type="hidden" name="token">
+      <p class="err" id="formErr" role="alert"></p>
+      <button class="btn btn--orange btn--block" type="submit">Save new password</button>
+      <p class="auth-switch"><a href="login.html">Back to log in</a></p>
+    </form>
+  </div>
+</main>
+<script src="auth.js"></script>
+</body>
+</html>
