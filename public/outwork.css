@@ -144,7 +144,7 @@ ul { list-style: none; }
 .hero-bg { position: absolute; inset: 0; z-index: -1; overflow: hidden; background: var(--orange); }
 .hero-bg video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 /* HERO VIDEO WASH: the three numbers after 106, 0 are how solid the orange is (left, middle, right). Lower = more video. */
-.hero-bg::after { content: ''; position: absolute; inset: 0; background: linear-gradient(90deg, rgba(255, 106, 0, 0.94) 0%, rgba(255, 106, 0, 0.86) 45%, rgba(255, 106, 0, 0.62) 100%); }
+.hero-bg::after { content: ''; position: absolute; inset: 0; z-index: 3; background: linear-gradient(90deg, rgba(255, 106, 0, 0.94) 0%, rgba(255, 106, 0, 0.86) 45%, rgba(255, 106, 0, 0.62) 100%); }
 .hero-bg.no-video::after { display: none; }
 .hero-bg i { position: absolute; border-radius: 50%; filter: blur(60px); opacity: 0.55; }
 .hero-bg i:nth-child(1) { width: 46vw; height: 46vw; right: -8vw; top: -14vw; background: #FF9A3D; animation: drift 16s ease-in-out infinite alternate; }
