@@ -106,6 +106,7 @@ let pass = 0; const ok = (name, cond) => { assert.ok(cond, name); pass++; consol
   ok('run logged', r.status === 201 && r.json.total === 70);
   // strength: a PR entered as 225 x 5 works out to a 1 rep max of 262.5, and is not a workout
   r = await B('PUT', '/api/me/prs', { prs: { lift: { ex: [{ ex: 'squat', w: 225, r: 5 }, { ex: 'pullup', best: 10 }, { ex: 'bench', act: 200, w: 185, r: 8 }] } } });
+  ok('settings still carry the names an older dashboard script reads', (await B('GET', '/api/me')).json.scoring.lifts.squat === 'Squat' && (await B('GET', '/api/me')).json.scoring.exercises.squat.name === 'Squat');
   ok('PR lift works out a 1 rep max', r.status === 200 && Math.abs(r.json.prs.lift.ex.squat.orm - 262.5) < 1e-6 && r.json.prs.lift.ex.squat.act === undefined && r.json.prs.lift.ex.pullup.best === 10);
   ok('a tested 1 rep max wins over a higher estimate', r.json.prs.lift.ex.bench.orm === 200 && Math.abs(r.json.prs.lift.ex.bench.est - 185 * (1 + 8 / 30)) < 1e-6);
   ok('entering a PR does not set a rep record', r.json.prs.lift.ex.squat.reps === undefined);

@@ -84,7 +84,13 @@ app.use('/api', require('./routes'));
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found.' }));
 
 app.get('/healthz', (req, res) => res.json({ ok: true }));
-app.use(express.static(path.join(__dirname, '..', 'public'), { extensions: ['html'], maxAge: PROD ? '1h' : 0 }));
+/* Pages, scripts and styles are checked with the server on every load, so a deploy shows up straight away.
+   A browser holding an hour old script against a newer server is how buttons stop working after an update.
+   Unchanged files still answer with a tiny "not modified", and images and video keep their hour. */
+app.use(express.static(path.join(__dirname, '..', 'public'), {
+  extensions: ['html'], maxAge: PROD ? '1h' : 0,
+  setHeaders: (res, file) => { if (/\.(html|js|css)$/i.test(file)) res.setHeader('Cache-Control', 'no-cache'); }
+}));
 app.use((req, res) => res.status(404).sendFile(path.join(__dirname, '..', 'public', 'index.html')));
 
 // Errors: the details go to the log, the visitor gets a plain message.

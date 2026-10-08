@@ -127,7 +127,10 @@ router.get('/me', wrap(async (req, res) => {
     groups: list, unread, prs, firstVisit: !welcomed && !Object.keys(prs).length, avatars: avatarList(), today: S.todayStr(),
     scoring: { cats: S.CATS, order: S.CAT_ORDER, exercises: S.EXERCISES, exOrder: S.EX_ORDER, maxLiftRows: S.MAX_LIFT_ROWS,
       effortBonus: S.EFFORT_BONUS, effortFloor: S.EFFORT_FLOOR, prPoints: S.PR_POINTS, farPoints: S.FAR_POINTS, repPoints: S.REP_POINTS, recordCap: S.RECORD_CAP,
-      streakStep: S.STREAK_STEP, streakCap: S.STREAK_CAP }
+      streakStep: S.STREAK_STEP, streakCap: S.STREAK_CAP,
+      // Names the dashboard script used before strength took any exercise. Kept so a browser tab still
+      // running that older script keeps working until it reloads.
+      lifts: { squat: 'Squat', bench: 'Bench', dead: 'Deadlift' }, paceBonus: S.EFFORT_BONUS }
   });
 }));
 
