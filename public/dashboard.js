@@ -19,7 +19,7 @@ var fmtSent = function (iso) { var d = new Date(iso), t = toStr(d); return t ===
 var fmtShort = function (s) { return toDate(s).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); };
 var plural = function (n, w) { return n + ' ' + w + (n === 1 ? '' : 's'); };
 var ordinal = function (n) { var s = ['th', 'st', 'nd', 'rd'], v = n % 100; return s[(v - 20) % 10] || s[v] || s[0]; };
-var fmtAmt = function (n) { return (Math.round(n * 100) / 100).toLocaleString(); };
+var fmtAmt = function (n) { return (Math.round(n * 1000) / 1000).toLocaleString(undefined, { maximumFractionDigits: 3 }); };
 var fmtPace = function (p) { var m = Math.floor(p), s = Math.round((p - m) * 60); if (s === 60) { m++; s = 0; } return m + ':' + pad(s); };
 var fmtTime = function (mins) {
   var t = Math.round(mins * 60), h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = t % 60;
@@ -65,17 +65,25 @@ var F = null;                      // open form state (log workout or create gro
 var source = null;
 
 var activeGroups = function () { return ME.groups; };
+/* A challenge is running until its last day passes on this person's own calendar, or the admin shuts it down. */
+var running = function (g) { return !g.closed && today() <= g.end; };
+var liveGroups = function () { return ME.groups.filter(running); };
+var pastGroups = function () { return ME.groups.filter(function (g) { return !running(g); }); };
 var rateText = function (cat) { var c = SC.cats[cat]; return fmtAmt(S.g.rates[cat]) + ' per ' + c.perLabel; };
-var over = function () { return !!S.g && (S.g.over || today() > S.g.end); };   // ran its course, or the admin shut it down
+var over = function () { return !!S.g && !running(S.g); };
+var GROUP_VIEWS = { board: 1, power: 1, activity: 1, group: 1 };
 
 /* ---------- loading ---------- */
 function loadMe() {
   return api('GET', '/me').then(function (d) {
     ME = d; SC = d.scoring;
-    var act = activeGroups(), saved = null;
+    // Which challenge is open. One running challenge opens by itself. With several, the person picks from My groups.
+    // A finished challenge is never opened automatically: it sits under past challenges.
+    var live = liveGroups(), saved = null;
     try { saved = localStorage.getItem('ow_group'); } catch (e) {}
-    if (!S.gid || !act.some(function (g) { return g.id === S.gid; })) {
-      S.gid = act.some(function (g) { return g.id === saved; }) ? saved : (act[0] ? act[0].id : null);
+    if (!S.gid || !ME.groups.some(function (g) { return g.id === S.gid; })) {
+      S.gid = live.some(function (g) { return g.id === saved; }) ? saved : (live.length === 1 ? live[0].id : null);
+      if (!S.gid && GROUP_VIEWS[S.view]) S.view = 'groups';
     }
   });
 }
@@ -83,10 +91,11 @@ function loadGroup() {
   if (!S.gid) { S.g = null; S.board = []; return Promise.resolve(); }
   return api('GET', '/groups/' + S.gid).then(function (d) {
     S.g = d.group; S.board = d.board; S.invites = d.invites || [];
+    if (over() && S.view !== 'board' && GROUP_VIEWS[S.view]) S.view = 'board';   // a finished challenge only has its final results
   }).catch(function (e) { if (e.status === 404) { S.gid = null; S.g = null; return loadMe().then(loadGroup); } throw e; });
 }
 function loadView() {
-  if (!S.g) return Promise.resolve();
+  if (!S.g || over()) return Promise.resolve();
   if (S.view === 'power') return api('GET', '/groups/' + S.gid + '/power').then(function (d) { S.power = d; });
   if (S.view === 'activity') return api('GET', '/groups/' + S.gid + '/feed' + (S.feedMine ? '?mine=1' : '')).then(function (d) { S.feed = d.workouts; });
   return Promise.resolve();
@@ -108,18 +117,21 @@ function connect() {
 }
 
 /* ---------- top bar ---------- */
-var TABS = [['board', 'Leaderboard'], ['power', 'Power rankings'], ['activity', 'Activity'], ['group', 'Group'], ['groups', 'My groups'], ['profile', 'Profile']];
-var BRAND = '<a class="brand" href="index.html"><i>' + ICON.mark + '</i>Outwork</a>';
-function groupSelect(id) {
-  var act = activeGroups();
-  return act.length > 1 ? '<select class="gsel" id="' + id + '" data-gsel aria-label="Group">' + act.map(function (g) { return '<option value="' + g.id + '"' + (g.id === S.gid ? ' selected' : '') + '>' + esc(g.name) + '</option>'; }).join('') + '</select>' : '';
+/* The tabs follow what is open. A running challenge has all of them. A finished one only has its final results.
+   With no challenge open there is nothing but My groups and Profile. */
+function tabs() {
+  if (!ME.groups.length) return [['groups', 'Home'], ['profile', 'Profile']];
+  if (!S.g) return [['groups', 'My groups'], ['profile', 'Profile']];
+  if (over()) return [['board', 'Final results'], ['groups', 'My groups'], ['profile', 'Profile']];
+  return [['board', 'Leaderboard'], ['power', 'Power rankings'], ['activity', 'Activity'], ['group', 'Group'], ['groups', 'My groups'], ['profile', 'Profile']];
 }
+var BRAND = '<a class="brand" href="index.html"><i>' + ICON.mark + '</i>Outwork</a>';
 /* Desktop shows the tabs in the bar. Phones and tablets get the menu button instead. */
 function barHTML() {
   return '<div class="wrap-w dbar-in">' + BRAND +
-    '<nav class="dtabs" aria-label="Dashboard">' + TABS.map(function (t) {
+    '<nav class="dtabs" aria-label="Dashboard">' + tabs().map(function (t) {
       return '<button class="dtab" data-act="view" data-v="' + t[0] + '"' + (S.view === t[0] ? ' aria-current="page"' : '') + '>' + t[1] + '</button>';
-    }).join('') + '</nav><div class="dbar-right">' + groupSelect('gsel') +
+    }).join('') + '</nav><div class="dbar-right">' +
     '<button class="bell" data-act="notes" aria-label="Notifications' + (ME.unread ? ', ' + ME.unread + ' new' : '') + '">' + ICON.bell + (ME.unread ? '<b>' + ME.unread + '</b>' : '') + '</button>' +
     '<button class="dbar-me" data-act="view" data-v="profile" aria-label="Your profile">' + ava({ avatar: ME.user.avatar, name: ME.user.fullName }, 'ava--sm') + '</button>' +
     '<button class="menu-btn" id="menuBtn" data-act="menu" aria-label="Open menu" aria-expanded="' + menuOpen() + '">' + ICON.menu + '</button>' +
@@ -129,15 +141,14 @@ function renderBar() { var b = $('dbar'); if (b) b.innerHTML = barHTML(); }
 
 /* The menu for phones and tablets: every page, the group switcher and log out. The page blurs behind it. */
 function menuHTML() {
-  var act = activeGroups();
   return '<div class="menu-veil" data-act="menuClose"></div>' +
     '<aside class="menu" id="menu" role="dialog" aria-modal="true" aria-label="Menu">' +
     '<div class="menu-top">' + BRAND + '<button class="icon-btn" id="menuX" data-act="menuClose" aria-label="Close menu">' + ICON.x + '</button></div>' +
-    (act.length > 1 ? '<div class="menu-group"><span class="lbl">Group</span>' + groupSelect('gselM') + '</div>' : '') +
-    '<div class="menu-links">' + TABS.map(function (t) {
+    (S.g ? '<p class="menu-ctx">' + (over() ? 'Finished challenge' : 'Open challenge') + '<b>' + esc(S.g.name) + '</b></p>' : '') +
+    '<div class="menu-links">' + tabs().map(function (t) {
       return '<button data-act="view" data-v="' + t[0] + '"' + (S.view === t[0] ? ' class="on" aria-current="page"' : '') + '>' + t[1] + ICON.go + '</button>';
     }).join('') + '</div>' +
-    (S.g && !over() ? '<div class="menu-actions"><button class="btn btn--orange btn--block" data-act="log">' + ICON.plus + 'Log a workout</button></div>' : '') +
+    (liveGroups().length ? '<div class="menu-actions"><button class="btn btn--orange btn--block" data-act="log">' + ICON.plus + 'Log a workout</button></div>' : '') +
     '<div class="menu-acct"><p>' + esc(ME.user.fullName) + '<br>' + esc(ME.user.email) + '</p><button class="btn btn--ghost btn--block" data-act="logout">Log out</button></div></aside>';
 }
 function menuOpen() { return document.documentElement.classList.contains('menu-open'); }
@@ -168,21 +179,34 @@ var joinFormHTML = function () {
     '<button class="btn btn--black" type="submit">Join</button></form>';
 };
 /* Every group this person is in. Each one keeps its own leaderboard, and only counts workouts from its own start date. */
+/* Every challenge this person is in, as cards. Running ones first, finished ones under them. */
 function viewGroups() {
-  var act = activeGroups();
+  var live = liveGroups(), past = pastGroups();
+  var card = function (g) {
+    var on = running(g), left = dayDiff(g.end, today()), place = g.rank ? g.rank + ordinal(g.rank) : 'Unplaced';
+    var when = on ? (today() < g.start ? 'Starts ' + fmtShort(g.start) : left <= 0 ? 'Last day' : plural(left + 1, 'day') + ' left')
+      : (g.closed ? 'Shut down by the admin' : 'Ended ' + fmtShort(g.end));
+    return '<button class="gcard' + (on ? '' : ' gcard--past') + (g.id === S.gid ? ' gcard--on' : '') + '" data-act="openGroup" data-id="' + g.id + '">' +
+      '<span class="gcard-top"><b>' + esc(g.name) + '</b>' + (g.role === 'admin' ? '<span class="tag tag--k">Admin</span>' : '') + (g.id === S.gid ? '<span class="tag">Open now</span>' : '') + '</span>' +
+      (on ? '<span class="gcard-rank">' + (g.rank ? g.rank + '<small>' + ordinal(g.rank) + '</small>' : '0') + '</span>' +
+            '<span class="gcard-meta">of ' + g.members + ', with ' + plural(g.points, 'point') + '</span>'
+          : '<span class="gcard-meta">You finished ' + place + ' of ' + g.members + ' with ' + plural(g.points, 'point') + '</span>' +
+            '<span class="gcard-meta">' + (g.leader ? 'Winner: ' + esc(g.leader) : 'Nobody logged a workout') + '</span>') +
+      '<span class="gcard-when">' + esc(when) + '</span><span class="gcard-go">' + (on ? 'Open leaderboard' : 'See final results') + ICON.go + '</span></button>';
+  };
   return '<main class="wrap-w dmain"><h2 class="sec">My groups</h2>' +
-    '<p class="rules-p">Pick a group to see its leaderboard. A workout you log counts in every group you are in, from the day that group\'s challenge started.</p>' +
-    '<div class="gcards">' + act.map(function (g) {
-      var left = dayDiff(g.end, today());
-      var when = g.closed ? 'Shut down by the admin' : today() > g.end ? 'Ended ' + fmtShort(g.end) : today() < g.start ? 'Starts ' + fmtShort(g.start) : left <= 0 ? 'Last day' : plural(left + 1, 'day') + ' left';
-      return '<button class="gcard' + (g.id === S.gid ? ' gcard--on' : '') + '" data-act="openGroup" data-id="' + g.id + '">' +
-        '<span class="gcard-top"><b>' + esc(g.name) + '</b>' + (g.role === 'admin' ? '<span class="tag tag--k">Admin</span>' : '') + (g.id === S.gid ? '<span class="tag">Open now</span>' : '') + '</span>' +
-        '<span class="gcard-rank">' + (g.rank ? g.rank + '<small>' + ordinal(g.rank) + '</small>' : '0') + '</span>' +
-        '<span class="gcard-meta">of ' + g.members + ', with ' + plural(g.points, 'point') + '</span><span class="gcard-when">' + esc(when) + '</span></button>';
-    }).join('') + '</div>' +
+    (live.length
+      ? '<p class="rules-p">' + (live.length > 1 ? 'You are in ' + live.length + ' running challenges. Pick one to open its leaderboard. A workout you log counts in every one of them.' : 'Open your challenge to see its leaderboard.') + '</p>' +
+        '<div class="gcards">' + live.map(card).join('') + '</div>' +
+        '<div class="glog"><button class="btn btn--black" data-act="log">' + ICON.plus + 'Log a workout</button>' + (live.length > 1 ? '<span>Counts in all ' + live.length + ' challenges.</span>' : '') + '</div>'
+      : '<div class="empty">You are not in a running challenge. Create a group or join one with a code.</div>') +
     '<div class="block" style="margin-top:36px"><button class="btn btn--orange" data-act="create">' + ICON.plus + 'Create a group</button>' +
-    '<p class="or">Have a group code?</p>' + joinFormHTML() + '</div></main>';
+    '<p class="or">Have a group code?</p>' + joinFormHTML() + '</div>' +
+    (past.length ? '<div class="block"><h2 class="sec">Past challenges</h2><div class="gcards">' + past.map(card).join('') + '</div></div>' : '') +
+    '</main>';
 }
+/* Which challenge the page is about, shown when the person is in more than one. */
+var ctxLine = function () { return liveGroups().length > 1 ? '<p class="ctx">' + esc(S.g.name) + '<button class="link" data-act="view" data-v="groups">Switch</button></p>' : ''; };
 
 function viewBoard() {
   var g = S.g, me = S.board.filter(function (r) { return r.id === ME.user.id; })[0] || { points: 0, rank: 0, streak: 0 };
@@ -191,7 +215,7 @@ function viewBoard() {
   var hero = '<header class="band--orange dhero"><div class="wrap-w">' +
     (ended
       ? '<h1 class="h-lg"><span class="h-dim">' + esc(g.name) + ' is over.</span> ' + (winner ? esc(winner.id === ME.user.id ? 'You win.' : winner.name + ' wins.') : 'Nobody logged a workout.') + '</h1>' +
-        (g.closed ? '<p class="hero-sub"><span>The admin shut this challenge down early. These results are final.</span></p>' : '')
+        '<p class="hero-sub"><span>' + (g.closed ? 'The admin shut this challenge down early. These results are final.' : 'It ended ' + esc(fmtDay(g.end)) + '. These results are final.') + '</span></p>'
       : '<h1 class="h-lg">' + esc(g.name) + '</h1><p class="hero-sub"><span>' + (left <= 0 ? 'Last day' : plural(left + 1, 'day') + ' left') + '. Ends ' + esc(fmtDay(g.end)) + '.</span><span class="live">Live</span></p>') +
     '<div class="stats"><div><b>' + me.points + '</b><span>Your points</span></div>' +
     '<div><b>' + (me.rank ? me.rank + '<small>' + ordinal(me.rank) + '</small>' : '0') + '</b><span>Place, of ' + S.board.length + '</span></div>' +
@@ -204,8 +228,11 @@ function viewBoard() {
       '<div><div class="lb-name">' + esc(r.name) + (r.id === ME.user.id ? '<span class="tag">You</span>' : '') + (r.role === 'admin' ? '<span class="tag tag--k">Admin</span>' : '') + '</div>' +
       '<div class="lb-meta">' + meta + '</div></div><div class="lb-pts">' + r.points + '<small>points</small></div></div>';
   }).join('');
-  return hero + '<main class="wrap-w dmain"><h2 class="sec">Leaderboard</h2><div class="lb">' + rows + '</div>' +
-    (S.board.length === 1 ? '<p class="note">It is only you so far. Invite people from the Group tab.</p>' : '') + '</main>';
+  return hero + '<main class="wrap-w dmain"><h2 class="sec">' + (ended ? 'Final leaderboard' : 'Leaderboard') + '</h2><div class="lb">' + rows + '</div>' +
+    (ended
+      ? '<div class="block" style="margin-top:40px"><h2 class="sec">This challenge is finished</h2><p class="rules-p">Nothing more can be logged here. You can keep it under past challenges or take it off your list.</p>' +
+        '<div class="pop-actions"><button class="btn btn--black" data-act="view" data-v="groups">Back to my groups</button><button class="btn btn--ghost" data-act="leave">Remove from my list</button></div></div>'
+      : S.board.length === 1 ? '<p class="note">It is only you so far. Invite people from the Group tab.</p>' : '') + '</main>';
 }
 
 function viewPower() {
@@ -220,10 +247,10 @@ function viewPower() {
   var trend = { up: ['Rising', 'trend--up'], down: ['Slowing', 'trend--down'], steady: ['Steady', ''], 'new': ['New', ''] };
   var head = !top || !top.points
     ? '<div class="proj"><div><small>Power rankings</small><strong>No workouts yet</strong><p class="proj-num">Projections appear once people start logging.</p></div></div>'
-    : '<div class="proj"><div class="proj-who">' + ava(top, 'ava--lg') + '<div><small>' + (p.over ? 'Final result' : 'Projected winner') + '</small><strong>' + esc(top.name) + '</strong>' +
-      '<p class="proj-num">' + (p.over ? top.points + ' points' : top.projected + ' points projected, ' + plural(p.daysLeft, 'day') + ' left') + '</p></div></div><ul>' +
+    : '<div class="proj"><div class="proj-who">' + ava(top, 'ava--lg') + '<div><small>Projected winner</small><strong>' + esc(top.name) + '</strong>' +
+      '<p class="proj-num">' + top.projected + ' points projected, ' + plural(Math.max(0, dayDiff(S.g.end, today())), 'day') + ' left' + '</p></div></div><ul>' +
       why.map(function (w) { return '<li>' + w + '</li>'; }).join('') + '</ul></div>';
-  return '<main class="wrap-w dmain"><h2 class="sec">Power rankings</h2>' +
+  return '<main class="wrap-w dmain">' + ctxLine() + '<h2 class="sec">Power rankings</h2>' +
     '<p class="rules-p">Who is on course to win. Each projection is the points a person has now, plus their daily pace for the days left. The last seven days count for most of that pace.</p>' + head +
     '<table class="pw"><thead><tr><th>#</th><th>Player</th><th>Now</th><th>Points a day</th><th>Streak</th><th>Active days</th><th>Form</th><th>Projected</th></tr></thead><tbody>' +
     p.rankings.map(function (r) {
@@ -254,7 +281,7 @@ function viewActivity() {
         (w.user_id === ME.user.id && !over() ? '<button class="link" data-act="delWorkout" data-id="' + w.id + '">Remove</button>' : '') +
         '</div><div class="feed-pts">+' + total + '</div></div>';
     }).join('');
-  return '<main class="wrap-w dmain"><h2 class="sec">Activity</h2><div class="seg" style="margin-bottom:18px">' +
+  return '<main class="wrap-w dmain">' + ctxLine() + '<h2 class="sec">Activity</h2><div class="seg" style="margin-bottom:18px">' +
     '<button data-act="feed" data-v="1" aria-pressed="' + S.feedMine + '">My workouts</button><button data-act="feed" data-v="0" aria-pressed="' + !S.feedMine + '">Everyone</button></div>' +
     '<div style="max-width:760px">' + body + '</div>' +
     (S.feedMine ? '<p class="note">Streak points are added to your total on the leaderboard, once per day.</p>' : '') + '</main>';
@@ -311,12 +338,31 @@ function viewGroup() {
   return '<main class="wrap-w dmain"><h1 class="gname">' + esc(g.name) + (ended ? '<span class="tag tag--k">Ended</span>' : '') + '</h1><div class="cols"><div>' + left + '</div><div>' + right + '</div></div></main>';
 }
 
+/* Time is typed as hours, minutes and seconds in three number boxes, so a phone keypad can enter it exactly. */
+var TIME_PARTS = [['th', 'hr', 'Hours'], ['tm', 'min', 'Minutes'], ['ts', 'sec', 'Seconds']];
+function timeBoxes(attr, prefix, vals, label) {
+  return '<div class="field"><span class="lbl">' + label + '</span><div class="time3">' + TIME_PARTS.map(function (p) {
+    return '<label><input class="input" ' + attr + '="' + prefix + p[0] + '" inputmode="numeric" pattern="[0-9]*" maxlength="' + (p[0] === 'tm' ? 3 : 2) + '" placeholder="0" aria-label="' + p[2] + '" value="' + esc(vals[p[0]] || '') + '"><small>' + p[1] + '</small></label>';
+  }).join('') + '</div></div>';
+}
+/* "1:05:30" for the server, or '' when nothing was typed. */
+function timeText(o) {
+  var n = function (v) { var x = parseInt(String(v || '').replace(/[^0-9]/g, ''), 10); return x > 0 ? x : 0; };
+  var h = n(o.th), m = n(o.tm), s = n(o.ts);
+  return h || m || s ? h + ':' + pad(m) + ':' + pad(s) : '';
+}
+function timeParts(mins) {
+  var t = Math.round(mins * 60); if (!(t > 0)) return {};
+  var h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = t % 60;
+  return { th: h ? String(h) : '', tm: String(m), ts: pad(s) };
+}
+var distText = function (v) { return String(v || '').replace(',', '.').replace(/[^0-9.]/g, ''); };
 function prFields() {
   return SC.order.map(function (k) {
     var c = SC.cats[k], r = ME.prs[k] || {};
     var fld = function (key, label, ph, val) { return '<div class="field"><label>' + label + '<input class="input" data-pr="' + k + '|' + key + '" inputmode="decimal" placeholder="' + ph + '" value="' + esc(val) + '"></label></div>'; };
-    return '<h3 class="rules-h">' + c.label + '</h3><div class="rec-grid' + (c.type === 'lift' ? ' rec-grid--3' : '') + '">' +
-      (c.type === 'dist' ? fld('dist', 'Distance, ' + c.units, '', r.dist ? fmtAmt(r.dist).replace(/,/g, '') : '') + fld('time', 'Your best time', '25:00', r.pace && r.dist ? fmtTime(r.pace * r.dist / c.per) : '')
+    return '<h3 class="rules-h">' + c.label + '</h3><div class="rec-grid' + (c.type === 'lift' ? ' rec-grid--3' : ' rec-grid--time') + '">' +
+      (c.type === 'dist' ? fld('dist', 'Distance, ' + c.units, '', r.dist ? String(Math.round(r.dist * 1000) / 1000) : '') + timeBoxes('data-pr', k + '|', r.pace && r.dist ? timeParts(r.pace * r.dist / c.per) : {}, 'Your best time')
         : Object.keys(SC.lifts).map(function (l) { return fld(l, SC.lifts[l] + ', lb', '', r[l] ? fmtAmt(r[l]).replace(/,/g, '') : ''); }).join('')) + '</div>';
   }).join('');
 }
@@ -351,9 +397,10 @@ function viewProfile() {
 
 function render() {
   var body;
+  if (S.g && over() && S.view !== 'board' && GROUP_VIEWS[S.view]) S.view = 'board';
   if (S.view === 'profile') body = viewProfile();
-  else if (S.view === 'groups' && ME.groups.length) body = viewGroups();
-  else if (!S.g) body = viewWelcome();
+  else if (!ME.groups.length) body = viewWelcome();
+  else if (S.view === 'groups' || !S.g) body = viewGroups();
   else if (S.view === 'power') body = viewPower();
   else if (S.view === 'activity') body = viewActivity();
   else if (S.view === 'group') body = viewGroup();
@@ -389,6 +436,7 @@ function updateText(u) {
   return { t: 'Something changed', v: '' };
 }
 function showUpdates() {
+  if (!S.gid) return;
   if (!S.gid) return;
   api('GET', '/groups/' + S.gid + '/updates').then(function (d) {
     if (!d.updates.length || modalWrap.classList.contains('open')) return;
@@ -460,7 +508,7 @@ function openCreate() {
 function submitCreate() {
   var rates = {}; SC.order.forEach(function (k) { if (F.rates[k].on) rates[k] = F.rates[k].rate; });
   F.busy = true; F.err = '';
-  api('POST', '/groups', { name: F.name, days: F.days, dailyCap: F.cap, rates: rates, invites: F.inv }).then(function (d) {
+  api('POST', '/groups', { name: F.name, days: F.days, dailyCap: F.cap, rates: rates, invites: F.inv, today: today() }).then(function (d) {
     closeModal(); S.gid = d.id; S.view = 'group'; S.inv = null;
     try { localStorage.setItem('ow_group', d.id); } catch (e) {}
     toast('Group created.' + (d.invitesSent ? ' ' + plural(d.invitesSent, 'invite') + ' sent.' : ''));
@@ -469,14 +517,21 @@ function submitCreate() {
 }
 
 /* ---------- log a workout ---------- */
+/* A workout goes into every running challenge it fits, so the form covers all of them. */
+function logGroups() { var live = liveGroups(); return S.g && running(S.g) ? live.slice().sort(function (a, b) { return (b.id === S.gid) - (a.id === S.gid); }) : live; }
 function logBody() {
-  var g = S.g, cats = SC.order.filter(function (k) { return g.rates[k] !== undefined; });
+  var groups = logGroups(), many = groups.length > 1;
+  var cats = SC.order.filter(function (k) { return groups.some(function (g) { return g.rates[k] !== undefined; }); });
+  var rateOf = function (k) {   // shown when every challenge with this workout pays the same
+    var r = groups.filter(function (g) { return g.rates[k] !== undefined; }).map(function (g) { return g.rates[k]; });
+    return r.every(function (x) { return x === r[0]; }) ? r[0] : null;
+  };
   var c = F.cat ? SC.cats[F.cat] : null, rec = F.cat ? (ME.prs[F.cat] || {}) : {};
   var fld = function (key, label, ph) { return '<div class="field"><label>' + label + '<input class="input" data-lg="' + key + '" inputmode="decimal" placeholder="' + ph + '" value="' + esc(F[key] || '') + '"></label></div>'; };
   var cell = function (key, ph, lab) { return '<input class="input" data-lg="' + key + '" inputmode="decimal" placeholder="' + ph + '" aria-label="' + lab + '" value="' + esc(F[key] || '') + '">'; };
   var inputs = '';
   if (c && c.type === 'dist') {
-    inputs = '<div class="rec-grid">' + fld('dist', 'Distance, ' + c.units, '') + fld('time', 'Time', '42:30') + '</div><p class="hint rec-line">' +
+    inputs = '<div class="rec-grid rec-grid--time">' + fld('dist', 'Distance, ' + c.units, c.unit === 'mi' ? '3.25' : '') + timeBoxes('data-lg', '', F, 'Time') + '</div><p class="hint rec-line">' +
       (rec.pace ? 'Your PR: ' + fmtAmt(rec.dist) + ' ' + c.unit + ' in ' + fmtTime(rec.pace * rec.dist / c.per) + ' (' + fmtPace(rec.pace) + ' per ' + c.perLabel + ')' : 'No PR saved. Add one in your profile to earn the pace bonus. Otherwise this workout sets it.') + '</p>';
   } else if (c) {
     inputs = '<div class="lift-grid"><span></span><span>Sets</span><span>Reps</span><span>Weight</span><span>Your PR</span>' + Object.keys(SC.lifts).map(function (l) {
@@ -484,10 +539,13 @@ function logBody() {
       return '<b>' + n + '</b>' + cell(l + '_s', '5', n + ' sets') + cell(l + '_r', '5', n + ' reps') + cell(l + '_w', 'lb', n + ' weight in pounds') + cell(l + '_pr', 'lb', n + ' PR in pounds');
     }).join('') + '</div><p class="hint rec-line">Fill in the lifts you did. Your PRs are saved to your profile.</p>';
   }
-  var canYest = yesterday() >= g.start;
+  var canYest = groups.some(function (g) { return yesterday() >= g.start; });
   return modalTop('Log a workout') +
+    (many ? '<p class="ok-box" style="margin:0 0 16px">Counts in ' + esc(groups.map(function (g) { return g.name; }).join(' and ')) + '.</p>' : '') +
     '<div class="field"><span class="lbl">What did you finish?</span><div class="pick">' + cats.map(function (k) {
-      return '<button type="button" data-act="lgCat" data-v="' + k + '" aria-pressed="' + (F.cat === k) + '"><span>' + SC.cats[k].label + '</span><i>' + fmtAmt(g.rates[k]) + '/' + (SC.cats[k].type === 'dist' ? SC.cats[k].unit === 'mi' ? 'mi' : SC.cats[k].perLabel.replace('yards', 'yd').replace('meters', 'm') : 'rep') + '</i></button>';
+      var r = rateOf(k), u = SC.cats[k];
+      return '<button type="button" data-act="lgCat" data-v="' + k + '" aria-pressed="' + (F.cat === k) + '"><span>' + u.label + '</span>' +
+        (r === null ? '' : '<i>' + fmtAmt(r) + '/' + (u.type === 'dist' ? u.unit === 'mi' ? 'mi' : u.perLabel.replace('yards', 'yd').replace('meters', 'm') : 'rep') + '</i>') + '</button>';
     }).join('') + '</div></div>' + inputs + '<div class="prev" id="lgPrev">' + (F.prevHTML || '') + '</div>' +
     (canYest ? '<div class="field"><span class="lbl">When?</span><div class="seg"><button type="button" data-act="lgDate" data-v="' + today() + '" aria-pressed="' + (F.date === today()) + '">Today</button>' +
       '<button type="button" data-act="lgDate" data-v="' + yesterday() + '" aria-pressed="' + (F.date === yesterday()) + '">Yesterday</button></div></div>' : '') +
@@ -495,20 +553,21 @@ function logBody() {
     '<p class="err" id="lgErr">' + esc(F.err || '') + '</p><button class="btn btn--orange btn--block" data-act="lgSubmit"' + (F.busy ? ' disabled' : '') + '>Log workout</button>';
 }
 function logPayload() {
-  var c = SC.cats[F.cat], body = { cat: F.cat, date: F.date, note: F.note || '' };
-  if (c.type === 'dist') { body.dist = F.dist || ''; body.time = F.time || ''; }
+  var c = SC.cats[F.cat], body = { cat: F.cat, date: F.date, note: F.note || '', group: S.g && running(S.g) ? S.gid : undefined };
+  if (c.type === 'dist') { body.dist = distText(F.dist); body.time = timeText(F); }
   else { body.lifts = {}; Object.keys(SC.lifts).forEach(function (l) { body.lifts[l] = { sets: F[l + '_s'], reps: F[l + '_r'], w: F[l + '_w'], pr: F[l + '_pr'] }; }); }
   return body;
 }
 function prevHTML(p) {
-  var c = SC.cats[F.cat];
+  var c = SC.cats[F.cat], many = p.groups && p.groups.length > 1;
   var row = function (a, b, cls) { return '<div class="prev-row' + (cls ? ' ' + cls : '') + '"><span>' + a + '</span><b>' + b + '</b></div>'; };
-  return (c.type === 'dist'
-      ? row(esc(F.dist) + ' ' + c.unit + ' at ' + esc(rateText(F.cat)), p.base) + (p.hasPr ? row('Pace bonus, ' + fmtPace(p.pace) + ' per ' + c.perLabel, '+' + p.perf) : row('No PR saved, so no pace bonus yet', '+0'))
+  return (many ? '<p class="prev-in">In ' + esc(p.group) + '</p>' : '') +
+    (c.type === 'dist'
+      ? row(esc(distText(F.dist)) + ' ' + c.unit + ' in ' + esc(fmtTime(p.pace * (parseFloat(distText(F.dist)) || 0) / c.per)), p.base) + (p.hasPr ? row('Pace bonus, ' + fmtPace(p.pace) + ' per ' + c.perLabel, '+' + p.perf) : row('No PR saved, so no pace bonus yet', '+0'))
       : p.rows.map(function (r) { return row(r.name + ' ' + r.sets + ' x ' + r.reps + ' at ' + r.pct + '% of PR', r.pts); }).join('')) +
     p.prs.map(function (x) { return row('New PR: ' + esc(x.toLowerCase()), '+' + SC.prPoints, 'prev-pr'); }).join('') +
     (p.streak ? row('Streak, day ' + p.streakDay, '+' + p.streak) : '') + row('Total', '+' + p.total, 'prev-total') +
-    (p.alsoIn && p.alsoIn.length ? '<p class="hint" style="margin-top:10px">Also counts in ' + esc(p.alsoIn.join(', ')) + ', scored at that group\'s rates.</p>' : '');
+    (many ? p.groups.slice(1).map(function (g) { return row('Also in ' + esc(g.name) + ', at its rates', '+' + g.total); }).join('') : '');
 }
 var prevT;
 function preview() {
@@ -516,7 +575,7 @@ function preview() {
   prevT = setTimeout(function () {
     if (!F || F.kind !== 'log' || !F.cat) return;
     var mine = F;
-    api('POST', '/groups/' + S.gid + '/workouts/preview', logPayload()).then(function (p) {
+    api('POST', '/workouts/preview', logPayload()).then(function (p) {
       if (F !== mine) return;
       F.prevHTML = prevHTML(p); var el = $('lgPrev'); if (el) el.innerHTML = F.prevHTML;
     }).catch(function () { if (F === mine) { F.prevHTML = ''; var el = $('lgPrev'); if (el) el.innerHTML = ''; } });
@@ -525,13 +584,16 @@ function preview() {
 function openLog() {
   F = { kind: 'log', cat: '', date: today(), note: '' };
   openModal(logBody(), '', 'Log a workout');
+  var first = modal.querySelector('.pick button'); if (first) first.focus();   // not the note box, so a phone keyboard does not open
 }
 function submitLog() {
   if (!F.cat) { F.err = 'Pick the workout you finished.'; modal.innerHTML = logBody(); return; }
   F.busy = true; F.err = '';
-  api('POST', '/groups/' + S.gid + '/workouts', logPayload()).then(function (p) {
+  api('POST', '/workouts', logPayload()).then(function (p) {
     closeModal();
-    toast((p.prs.length ? 'New PR. ' : 'Logged. ') + '+' + p.total + ' points.' + (p.alsoIn && p.alsoIn.length ? ' Also counted in ' + p.alsoIn.join(', ') + '.' : ''));
+    toast((p.prs.length ? 'New PR. ' : 'Logged. ') + (p.groups.length > 1
+      ? p.groups.map(function (g) { return '+' + g.total + ' in ' + g.name; }).join(', ') + '.'
+      : '+' + p.total + ' points.'));
     return loadMe().then(refresh);
   }).catch(function (e) { if (F) { F.busy = false; F.err = e.message; modal.innerHTML = logBody(); } });
 }
@@ -566,7 +628,7 @@ document.addEventListener('click', function (e) {
       try { localStorage.setItem('ow_group', id); } catch (err) {}
       refresh().then(connect).then(showUpdates).catch(fail); window.scrollTo(0, 0);
       break;
-    case 'log': openLog(); break;
+    case 'log': if (liveGroups().length) openLog(); break;
     case 'feed': S.feedMine = v === '1'; S.feed = null; render(); loadView().then(render).catch(fail); break;
     case 'copy':
       (navigator.clipboard && navigator.clipboard.writeText ? navigator.clipboard.writeText(S.g.code) : Promise.reject())
@@ -602,13 +664,15 @@ document.addEventListener('click', function (e) {
       break;
     case 'delWorkout': api('DELETE', '/workouts/' + id, {}).then(function () { toast('Workout removed.'); return refresh(); }).catch(fail); break;
     case 'leave':
-      if (S.g.role === 'admin') confirmBox('Delete ' + esc(S.g.name) + '?', 'This removes the group and its leaderboard for good.', 'Delete group', 'leaveYes');
+      if (over()) confirmBox('Remove ' + esc(S.g.name) + ' from your list?', 'It comes off your past challenges. The final results stay as they are for everyone else.', 'Remove it', 'leaveYes');
+      else if (S.g.role === 'admin') confirmBox('Delete ' + esc(S.g.name) + '?', 'This removes the group and its leaderboard for good.', 'Delete group', 'leaveYes');
       else confirmBox('Leave ' + esc(S.g.name) + '?', 'You come off the leaderboard and the rankings adjust. Your workouts in this group stop counting.', 'Leave group', 'leaveYes');
       break;
     case 'leaveYes':
-      S.g0admin = S.g.role === 'admin';
+      S.g0admin = S.g.role === 'admin'; S.g0over = over();
       api('POST', '/groups/' + S.gid + '/leave', {}).then(function () {
-        closeModal(); S.gid = null; S.g = null; S.view = 'board'; toast(S.g0admin ? 'Group deleted.' : 'You left the group.');
+        closeModal(); S.gid = null; S.g = null; S.view = 'board'; toast(S.g0over ? 'Removed from your list.' : S.g0admin ? 'Group deleted.' : 'You left the group.');
+        try { localStorage.removeItem('ow_group'); } catch (err) {}
         return loadMe().then(refresh).then(connect);
       }).catch(function (e2) { var x = $('cfErr'); if (x) x.textContent = e2.message; });
       break;
@@ -636,17 +700,13 @@ document.addEventListener('input', function (e) {
     return;
   }
   var lg = t.getAttribute('data-lg');
-  if (lg && F) { F[lg] = t.value; if (lg !== 'note') preview(); }
-});
-document.addEventListener('change', function (e) {
-  if (e.target.hasAttribute && e.target.hasAttribute('data-gsel')) {
-    closeMenu();
-    S.gid = e.target.value; S.inv = null; S.feed = null; S.power = null;
-    try { localStorage.setItem('ow_group', S.gid); } catch (err) {}
-    refresh().then(connect).then(showUpdates).catch(fail);
+  if (lg && F) {
+    if (lg === 'th' || lg === 'tm' || lg === 'ts') { var d = t.value.replace(/[^0-9]/g, ''); if (d !== t.value) t.value = d; }   // digits only
+    F[lg] = t.value; if (lg !== 'note') preview();
   }
+  var prk = t.getAttribute('data-pr');
+  if (prk && /\|t[hms]$/.test(prk)) { var d2 = t.value.replace(/[^0-9]/g, ''); if (d2 !== t.value) t.value = d2; }
 });
-
 document.addEventListener('submit', function (e) {
   var id = e.target.id, err;
   if (!id) return;   // forms without an id post straight to the server
@@ -667,6 +727,7 @@ document.addEventListener('submit', function (e) {
     err = $('prErr'); err.textContent = '';
     var prs = {};
     Array.prototype.forEach.call(e.target.querySelectorAll('[data-pr]'), function (inp) { var p = inp.getAttribute('data-pr').split('|'); (prs[p[0]] = prs[p[0]] || {})[p[1]] = inp.value; });
+    Object.keys(prs).forEach(function (k) { if (SC.cats[k].type === 'dist') { prs[k].time = timeText(prs[k]); prs[k].dist = distText(prs[k].dist); } });
     api('PUT', '/me/prs', { prs: prs }).then(function (d) { ME.prs = d.prs; ME.firstVisit = false; toast('PRs saved.'); }).catch(function (e2) { err.textContent = e2.message; });
   }
 });
@@ -698,7 +759,7 @@ loadMe().then(function () {
   // An invite link joins the group straight away. If the code no longer works, it is left in the box with the reason shown.
   if (!S.joinCode) return refresh();
   return joinGroup(S.joinCode).catch(function (e) {
-    if (e.status === 409) S.joinCode = ''; else if (activeGroups().length) S.view = 'groups';
+    if (e.status === 409) S.joinCode = ''; else if (ME.groups.length) S.view = 'groups';
     return refresh().then(function () { if (e.status !== 409) fail(e); });
   });
 }).then(function () {

@@ -69,6 +69,10 @@ Open `public/outwork.js` and search for `PUT YOUR VIDEO HERE`. Put the video fil
 5. Everyone in the group sees the same leaderboard. It updates live when anyone logs a workout.
 6. On their next visit, a pop up lists what changed since they last looked. Pop ups and confirmation messages open in the middle of the screen.
    On phones and tablets the tabs sit behind the menu button, the same as the rest of the site.
+   The tabs follow the challenge that is open. A running challenge has Leaderboard, Power rankings, Activity and Group. A finished or shut down challenge only has its final results and moves under Past challenges on My groups, where anyone can take it off their own list.
+   Someone in one running challenge lands on its leaderboard. Someone in several lands on My groups and picks one. Each challenge is its own card.
+   A logged workout goes into every running challenge it fits, each scored at that challenge's rates. Time is entered as hours, minutes and seconds, and distance takes decimals, so both are stored exactly as typed.
+   A challenge starts on the creator's own calendar day, not the server's.
 7. Leaving a group is one button on the Group tab. They come off the leaderboard and the ranks adjust.
 8. The admin cannot leave or be removed while other people are in the group. An admin who is alone in a group can delete it.
    The admin can shut the challenge down early from the Group tab. The leaderboard freezes, whoever is in first wins, nothing more can be logged or removed, and everyone in the group is emailed. It cannot be undone.

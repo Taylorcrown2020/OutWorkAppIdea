@@ -153,3 +153,11 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS welcomed_at timestamptz;
 
 -- Joining no longer waits for the admin. Anyone who was still waiting is let in.
 UPDATE memberships SET status = 'active', joined_at = COALESCE(joined_at, now()), last_seen_at = now() WHERE status = 'pending';
+
+-- A challenge starts on the creator's own calendar day. Before this, the start was the server's
+-- day (UTC), so a group made in the evening in the Americas started "tomorrow" and nobody could log.
+-- Groups made in the first half of the UTC day are moved back one day, once.
+ALTER TABLE groups ADD COLUMN IF NOT EXISTS start_local boolean NOT NULL DEFAULT false;
+UPDATE groups SET start_date = start_date - 1
+ WHERE NOT start_local AND start_date = (created_at AT TIME ZONE 'UTC')::date AND EXTRACT(HOUR FROM created_at AT TIME ZONE 'UTC') < 12;
+UPDATE groups SET start_local = true WHERE NOT start_local;

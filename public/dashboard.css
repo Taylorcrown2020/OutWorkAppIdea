@@ -242,3 +242,31 @@ html.menu-open #dash > *:not(.menu):not(.menu-veil) { filter: blur(12px); pointe
   .auth-main { padding: 20px 0 8px; align-items: start; }
   .auth { padding-bottom: 48px; }
 }
+
+/* ==========================================================================
+   MY GROUPS: one card per challenge, and the exact time boxes
+   ========================================================================== */
+.gcard-go { display: inline-flex; align-items: center; gap: 4px; margin-top: 14px; font-size: 14px; font-weight: 600; color: var(--orange-deep, #C2410C); }
+.gcard-go svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; transform: rotate(180deg); }
+.gcard--past { background: transparent; }
+.gcard--past .gcard-top { margin-bottom: 8px; }
+.gcard--past .gcard-meta { margin-top: 2px; font-weight: 400; }
+.gcard--past .gcard-go { color: var(--ink); }
+.glog { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; margin-top: 22px; }
+.glog span { font-size: 14.5px; color: var(--muted); }
+.ctx { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-bottom: 10px; font-size: 15px; font-weight: 600; }
+.menu-ctx { display: grid; gap: 2px; margin-bottom: 14px; padding-bottom: 14px; border-bottom: 1px solid var(--line); font-size: 13.5px; color: var(--muted); }
+.menu-ctx b { font-size: 18px; font-weight: 600; letter-spacing: -0.02em; color: var(--ink); }
+.prev-in { margin-bottom: 6px; font-size: 13.5px; font-weight: 600; }
+
+.rec-grid--time { grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); }
+.rec-grid--time .lbl { display: block; margin-bottom: 8px; font-size: 14px; font-weight: 600; }
+.time3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.time3 label { display: grid; gap: 4px; }
+.time3 .input { padding-left: 6px; padding-right: 6px; text-align: center; }
+.time3 small { font-size: 12.5px; font-weight: 500; color: var(--muted); text-align: center; }
+@media (max-width: 699px) {
+  .rec-grid--time { grid-template-columns: 1fr; }
+  .glog .btn { width: 100%; min-height: 54px; }
+  .gcards { grid-template-columns: 1fr; }
+}

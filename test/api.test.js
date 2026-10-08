@@ -141,12 +141,30 @@ let pass = 0; const ok = (name, cond) => { assert.ok(cond, name); pass++; consol
   ok('admin cannot delete their account mid challenge', (await A.form('/account/delete', { password: 'correct horse 1' })).to.includes('e=del_admin'));
   ok('admin can close a group nobody else is in', (await A('POST', `/api/groups/${gid2}/leave`, {})).json.closed === true);
 
+    // one log goes into every running challenge, with no group named
+  const gidM = (await A('POST', '/api/groups', { name: 'Side challenge', days: 7, dailyCap: 0, rates: { walk: 5 } })).json.id;
+  r = await A('POST', '/api/workouts/preview', { cat: 'walk', dist: '2', time: '0:40:00' });
+  ok('a workout previews in every running challenge at once', r.status === 200 && r.json.groups.length === 2);
+  r = await A('POST', '/api/workouts', { cat: 'walk', dist: '2.375', time: '0:41:07' });
+  ok('and is logged in all of them from one entry', r.status === 201 && r.json.groups.length === 2 && r.json.groups.every((g) => g.total > 0));
+  r = await A('GET', `/api/groups/${gid}/feed?mine=1`);
+  ok('exact distance and time are kept', Math.abs(r.json.workouts[0].dist - 2.375) < 1e-9 && Math.abs(r.json.workouts[0].mins - (41 + 7 / 60)) < 1e-9);
+  ok('removing it takes it out of both', (await A('DELETE', '/api/workouts/' + r.json.workouts[0].id, {})).status === 200);
+  ok('side challenge removed', (await A('POST', `/api/groups/${gidM}/leave`, {})).status === 200);
+  ok('a workout no challenge includes is refused', (await C('POST', '/api/workouts', { cat: 'run', dist: '1', time: '10:00' })).status === 400);
+  r = await A('POST', '/api/groups', { name: 'Evening start', days: 7, dailyCap: 0, rates: { run: 10 }, today: new Date(Date.now() - 86400000).toISOString().slice(0, 10) });
+  const gidE = r.json.id;
+  r = await A('GET', '/api/groups/' + gidE);
+  ok('a challenge starts on the creator\'s own calendar day', r.json.group.start === new Date(Date.now() - 86400000).toISOString().slice(0, 10));
+  ok('and can be logged in on that day', (await A('POST', `/api/groups/${gidE}/workouts/preview`, { cat: 'run', dist: '1', time: '9:00', date: r.json.group.start })).status === 200);
+  ok('admin deletes the empty group', (await A('POST', `/api/groups/${gidE}/leave`, {})).status === 200);
+
   // shutting a challenge down early
   ok('member cannot shut the challenge down', (await B('POST', `/api/groups/${gid}/close`, {})).status === 403);
   r = await A('POST', `/api/groups/${gid}/close`, {});
   ok('admin shuts the challenge down and the leader wins', r.status === 200 && r.json.winner === 'Taylor A. Admin');
   r = await B('GET', '/api/groups/' + gid);
-  ok('standings are frozen and marked over', r.json.group.closed === true && r.json.group.over === true && r.json.board[0].points === 72 && r.json.board[1].points === 68);
+  ok('standings are frozen and marked over', r.json.group.closed === true && r.json.board[0].points === 72 && r.json.board[1].points === 68);
   ok('nothing more can be logged', (await A('POST', `/api/groups/${gid}/workouts`, { cat: 'walk', dist: '1', time: '20:00' })).status === 400);
   r = await B('GET', `/api/groups/${gid}/feed?mine=1`);
   ok('logged workouts cannot be removed after the end', (await B('DELETE', '/api/workouts/' + r.json.workouts[0].id, {})).status === 400);
@@ -162,6 +180,15 @@ let pass = 0; const ok = (name, cond) => { assert.ok(cond, name); pass++; consol
   r = await A('GET', '/api/groups/' + gid);
   ok('leaderboard re-ranks without them', r.json.board.length === 1 && r.json.board[0].rank === 1);
   ok('left member loses access', (await B('GET', '/api/groups/' + gid)).status === 404);
+
+  // a finished challenge can come off the admin's own list while the others keep it
+  r = await A('POST', '/api/groups', { name: 'Short one', days: 3, dailyCap: 0, rates: { run: 10 } });
+  const gidF = r.json.id, codeF = (await A('GET', '/api/groups/' + gidF)).json.group.code;
+  await B('POST', '/api/groups/join', { code: codeF });
+  ok('admin cannot leave a running challenge with people in it', (await A('POST', `/api/groups/${gidF}/leave`, {})).status === 403);
+  await A('POST', `/api/groups/${gidF}/close`, {});
+  ok('the admin can take a finished challenge off their own list', (await A('POST', `/api/groups/${gidF}/leave`, {})).status === 200 && (await A('GET', '/api/groups/' + gidF)).status === 404);
+  ok('everyone else still has the final results', (await B('GET', '/api/groups/' + gidF)).json.group.closed === true);
 
   // forgot password
   const fs = require('fs'), logFile = process.env.SERVER_LOG || '/tmp/server.log';
