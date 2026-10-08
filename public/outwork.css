@@ -1012,3 +1012,12 @@ html.menu-open .menu { transform: none; visibility: visible; }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
+
+/* scoring page: record rules */
+.rec-h { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
+.rec-list { margin-top: 14px; display: grid; gap: 12px; padding: 0; list-style: none; }
+.rec-list li { position: relative; padding-left: 20px; font-size: 16px; line-height: 1.55; color: var(--muted); max-width: 60ch; }
+.rec-list li::before { content: ""; position: absolute; left: 0; top: 0.62em; width: 7px; height: 7px; border-radius: 50%; background: var(--orange); }
+.split .rate-list { margin-top: 0; }
+.ex .prev-row span { min-width: 0; }
+.split > div > .body + .rate-list { margin-top: 22px; }

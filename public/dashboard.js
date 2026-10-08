@@ -72,6 +72,14 @@ var pastGroups = function () { return ME.groups.filter(function (g) { return !ru
 var rateText = function (cat) { var c = SC.cats[cat]; return fmtAmt(S.g.rates[cat]) + ' per ' + c.perLabel; };
 var over = function () { return !!S.g && !running(S.g); };
 var GROUP_VIEWS = { board: 1, power: 1, activity: 1, group: 1 };
+/* How each sport states a pace: a mile time, a time per 100 yards or 500 meters, or miles an hour on a bike. */
+var paceText = function (cat, pace) { var c = SC.cats[cat]; return c.speed ? fmtAmt(Math.round(600 / pace) / 10) + ' mph' : fmtPace(pace) + ' per ' + c.perLabel; };
+var oneRepMax = function (w, reps) { return reps <= 1 ? w : w * (1 + Math.min(reps, 12) / 30); };
+var liftMarks = function () { return (ME.prs.lift || {}).ex || {}; };
+var exName = function (k, mark) { return (SC.exercises[k] || {}).name || (mark && mark.name) || k; };
+var exBody = function (k, row) { return SC.exercises[k] ? !!SC.exercises[k].body : false; };
+var wt = function (n) { return fmtAmt(Math.round(n * 10) / 10); };
+var pct = function (x) { return Math.round(x * 100) + '%'; };
 
 /* ---------- loading ---------- */
 function loadMe() {
@@ -263,8 +271,8 @@ function viewPower() {
 
 function metrics(w) {
   var c = SC.cats[w.cat];
-  if (c && c.type === 'dist') return fmtAmt(w.dist) + ' ' + c.unit + ' in ' + fmtTime(w.mins) + ' (' + fmtPace(w.mins / (w.dist / c.per)) + ' per ' + c.perLabel + ')';
-  return (w.lifts || []).map(function (l) { return SC.lifts[l.k] + ' ' + l.sets + ' x ' + l.reps + ' at ' + fmtAmt(l.w) + ' lb'; }).join(', ');
+  if (c && c.type === 'dist') return fmtAmt(w.dist) + ' ' + c.unit + ' in ' + fmtTime(w.mins) + ' (' + paceText(w.cat, w.mins / (w.dist / c.per)) + ')';
+  return (w.lifts || []).map(function (l) { return (l.name || exName(l.k)) + ' ' + l.sets + ' x ' + l.reps + (l.w ? ' at ' + fmtAmt(l.w) + ' lb' : ''); }).join(', ');
 }
 function viewActivity() {
   var list = S.feed;
@@ -275,8 +283,8 @@ function viewActivity() {
       var day = w.date === today() ? 'Today' : w.date === yesterday() ? 'Yesterday' : fmtShort(w.date);
       return '<div class="feed-item">' + ava(w, 'ava--sm') + '<div><div class="feed-line"><b>' + esc(w.name) + '</b> finished ' + esc(c.label) + '</div>' +
         '<div class="feed-meta">' + esc(day + ', ' + metrics(w)) + '</div>' +
-        '<div class="feed-break">' + w.base + (c.type === 'dist' ? ' for distance' : ' for reps') + (w.perf ? ', +' + w.perf + ' pace bonus' : '') + (w.pr_pts ? ', +' + w.pr_pts + ' new PR' : '') + '</div>' +
-        (w.prs && w.prs.length ? '<div class="feed-pr">New PR: ' + esc(w.prs.join(' and ').toLowerCase()) + '</div>' : '') +
+        '<div class="feed-break">' + w.base + (c.type === 'dist' ? ' for distance' : ' for reps') + (w.perf ? ', +' + w.perf + ' effort bonus' : '') + (w.pr_pts ? ', +' + w.pr_pts + (w.prs && w.prs.length > 1 ? ' records' : ' record') : '') + '</div>' +
+        (w.prs && w.prs.length ? '<div class="feed-pr">New record: ' + esc(w.prs.join(', ').toLowerCase()) + '</div>' : '') +
         (w.note ? '<div class="feed-note">' + esc(w.note) + '</div>' : '') +
         (w.user_id === ME.user.id && !over() ? '<button class="link" data-act="delWorkout" data-id="' + w.id + '">Remove</button>' : '') +
         '</div><div class="feed-pts">+' + total + '</div></div>';
@@ -327,11 +335,17 @@ function viewGroup() {
     '<div class="kv"><span>' + (ended ? 'Ran' : 'Runs') + '</span><span>' + fmtShort(g.start) + ' to ' + fmtShort(g.end) + '</span></div>' +
     '<div class="kv"><span>Workouts that count per day</span><span>' + (g.dailyCap || 'No limit') + '</span></div>' +
     '<h3 class="rules-h">Points for the work</h3>' + cats.map(function (k) { return '<div class="kv"><span>' + SC.cats[k].label + '</span><span>' + esc(rateText(k)) + '</span></div>'; }).join('') +
-    '<h3 class="rules-h">Bonuses</h3>' +
-    '<div class="kv"><span>Pace on distance workouts, against your PR</span><span>Up to +' + Math.round(SC.paceBonus * 100) + '%</span></div>' +
-    '<div class="kv"><span>New PR</span><span>+' + SC.prPoints + '</span></div>' +
+    '<h3 class="rules-h">Effort bonus</h3>' +
+    '<div class="kv"><span>At your PR pace, your 1 rep max, or your most reps</span><span>+' + pct(SC.effortBonus) + '</span></div>' +
+    '<div class="kv"><span>At 75% of your best</span><span>+' + pct(SC.effortBonus / 2) + '</span></div>' +
+    '<div class="kv"><span>At ' + pct(SC.effortFloor) + ' of your best or less</span><span>+0</span></div>' +
+    '<h3 class="rules-h">Records</h3>' +
+    '<div class="kv"><span>New PR pace or 1 rep max</span><span>+' + SC.prPoints + '</span></div>' +
+    '<div class="kv"><span>Longest distance you have logged</span><span>+' + SC.farPoints + '</span></div>' +
+    '<div class="kv"><span>Most reps in a set you have logged</span><span>+' + SC.repPoints + '</span></div>' +
+    '<h3 class="rules-h">Streak</h3>' +
     '<div class="kv"><span>Streak, days in a row</span><span>+' + SC.streakStep + ' a day, up to +' + SC.streakCap + '</span></div>' +
-    '<p class="rules-p" style="margin-top:14px">The most points when the challenge ends wins. A tie goes to whoever got there first.</p></div>' +
+    '<p class="rules-p" style="margin-top:14px">The most points when the challenge ends wins. A tie goes to whoever got there first. <a class="link" href="scoring.html">How scoring works</a></p></div>' +
     (admin ? adminBlocks
       : '<div class="block"><h2 class="sec">Leave this group</h2><p class="rules-p">You come off the leaderboard and the rankings adjust.</p><button class="btn btn--ghost" data-act="leave">Leave group</button></div>') +
     '<div class="block"><button class="btn btn--ghost btn--sm" data-act="view" data-v="groups">See all my groups</button></div>';
@@ -357,15 +371,73 @@ function timeParts(mins) {
   return { th: h ? String(h) : '', tm: String(m), ts: pad(s) };
 }
 var distText = function (v) { return String(v || '').replace(',', '.').replace(/[^0-9.]/g, ''); };
-function prFields() {
-  return SC.order.map(function (k) {
-    var c = SC.cats[k], r = ME.prs[k] || {};
-    var fld = function (key, label, ph, val) { return '<div class="field"><label>' + label + '<input class="input" data-pr="' + k + '|' + key + '" inputmode="decimal" placeholder="' + ph + '" value="' + esc(val) + '"></label></div>'; };
-    return '<h3 class="rules-h">' + c.label + '</h3><div class="rec-grid' + (c.type === 'lift' ? ' rec-grid--3' : ' rec-grid--time') + '">' +
-      (c.type === 'dist' ? fld('dist', 'Distance, ' + c.units, '', r.dist ? String(Math.round(r.dist * 1000) / 1000) : '') + timeBoxes('data-pr', k + '|', r.pace && r.dist ? timeParts(r.pace * r.dist / c.per) : {}, 'Your best time')
-        : Object.keys(SC.lifts).map(function (l) { return fld(l, SC.lifts[l] + ', lb', '', r[l] ? fmtAmt(r[l]).replace(/,/g, '') : ''); }).join('')) + '</div>';
-  }).join('');
+/* The PR form. Each sport is tested its own way: a mile for running and walking, 100 yards in the pool,
+   500 meters on the rower, average speed on the bike. Strength takes a lift and the reps it was done for. */
+function prRows() {
+  if (S.prRows) return S.prRows;
+  var marks = liftMarks(), keys = ['squat', 'bench', 'dead'];
+  Object.keys(marks).forEach(function (k) { if (keys.indexOf(k) < 0) keys.push(k); });
+  var n1 = function (x) { return x ? String(Math.round(x * 10) / 10) : ''; };
+  S.prRows = keys.map(function (k) {
+    var m = marks[k] || {}, body = SC.exercises[k] ? !!SC.exercises[k].body : (!m.orm && !!m.best);
+    return { k: k, name: exName(k, m), body: body, act: n1(m.act), w: m.est ? n1(m.w) : '', r: m.est ? String(m.r || '') : '', best: m.best ? String(m.best) : '', reps: m.reps || 0 };
+  });
+  return S.prRows;
 }
+/* Which max is in use for a row on the PR form: the tested one if there is one, otherwise the estimate. */
+var ormLine = function (row) {
+  var act = parseFloat(distText(row.act)) || 0, w = parseFloat(distText(row.w)) || 0, r = parseInt(row.r, 10) || 0;
+  var est = w && r > 1 ? oneRepMax(w, r) : 0;
+  if (act) return 'Using your tested max of ' + wt(act) + ' lb.' + (est ? ' The set works out to ' + wt(est) + '.' : '');
+  if (w && r === 1) return 'Using ' + wt(w) + ' lb. A single is a tested max.';
+  if (est) return 'Estimated 1 rep max: ' + wt(est) + ' lb, from ' + wt(w) + ' x ' + r + '.';
+  return 'Enter a tested max, or a set to estimate it from.';
+};
+/* The sport's test time worked out from another effort (Riegel), as the server does it. */
+var estPace = function (k, dist, mins) { var c = SC.cats[k]; return mins * Math.pow(c.test / dist, c.fade) / (c.test / c.per); };
+var testText = function (k, pace) { var c = SC.cats[k]; return c.speed ? fmtAmt(Math.round(600 / pace) / 10) + ' mph' : fmtTime(pace * c.test / c.per); };
+function estLine(k, dist, mins, hasActual) {
+  var c = SC.cats[k];
+  if (!(dist > 0 && mins > 0)) return 'Enter a distance and your time for it.';
+  return 'Estimated ' + c.prName.toLowerCase() + ': ' + testText(k, estPace(k, dist, mins)) + '.' + (hasActual ? ' Your tested PR is used instead.' : ' Used until you enter a tested PR.');
+}
+function prFields() {
+  var dist = SC.order.filter(function (k) { return SC.cats[k].type === 'dist'; }).map(function (k) {
+    var c = SC.cats[k], r = ME.prs[k] || {}, e = r.est || {}, ep = e.mins ? timeParts(e.mins) : {};
+    return '<h3 class="rules-h">' + c.label + '</h3>' +
+      (c.speed
+        ? '<div class="field"><label>' + c.prName + ', miles an hour<input class="input pr-one" data-pr="' + k + '|mph" inputmode="decimal" placeholder="16.5" value="' + (r.actual ? String(Math.round(6000 / r.actual) / 100) : '') + '"></label></div>'
+        : timeBoxes('data-pr', k + '|', r.actual ? timeParts(r.actual * c.test / c.per) : {}, c.prName + ', tested')) +
+      '<button type="button" class="link pr-est-btn" data-act="prEst" data-v="' + k + '" aria-expanded="' + !!e.dist + '">Never tested it? Estimate it from another ' + (k === 'ride' ? 'ride' : k === 'swim' ? 'swim' : k === 'row' ? 'row' : k === 'walk' ? 'walk' : 'run') + '</button>' +
+      '<div class="pr-est" id="prEst-' + k + '"' + (e.dist ? '' : ' hidden') + '>' +
+      '<div class="field"><label>Distance, ' + c.units + '<input class="input pr-one" data-pr="' + k + '|edist" inputmode="decimal" placeholder="' + (k === 'run' ? '26.2' : '') + '" value="' + (e.dist ? String(Math.round(e.dist * 1000) / 1000) : '') + '"></label></div>' +
+      timeBoxes('data-pr', k + '|e', { th: ep.th, tm: ep.tm, ts: ep.ts }, 'Your time for it') +
+      '<p class="hint prx-orm" id="est-' + k + '">' + esc(estLine(k, e.dist, e.mins, !!r.actual)) + '</p></div>' +
+      (r.far ? '<p class="hint pr-far">Longest logged: ' + fmtAmt(r.far) + ' ' + c.unit + '. Go past it for +' + SC.farPoints + '.</p>' : '');
+  }).join('');
+  return dist + '<div id="prLifts">' + prLiftFields() + '</div>';
+}
+function prLiftFields() {
+  var rows = prRows(), used = {}; rows.forEach(function (r) { used[r.k] = 1; });
+  return '<h3 class="rules-h">Strength</h3><p class="hint" style="margin:0 0 12px">Enter a 1 rep max you have tested, or a set to estimate it from. 225 for 5 works out to 262.5. A tested max is always used over an estimate. Bodyweight moves take your most reps in one set.</p>' +
+    rows.map(function (r, i) {
+      return '<div class="prx"><div class="prx-top"><b>' + (r.k === 'other' ? '<input class="input" data-px="' + i + '|name" maxlength="30" placeholder="Exercise name" aria-label="Exercise name" value="' + esc(r.name || '') + '">' : esc(r.name)) + '</b>' +
+        '<button type="button" class="icon-btn" data-act="prxRm" data-i="' + i + '" aria-label="Remove ' + esc(r.name || 'exercise') + '">' + ICON.x + '</button></div>' +
+        (r.body
+          ? '<div class="field"><label>Most reps in one set<input class="input pr-one" data-px="' + i + '|best" inputmode="numeric" pattern="[0-9]*" value="' + esc(r.best) + '"></label></div>'
+          : '<div class="field"><label>Tested 1 rep max, lb<input class="input pr-one" data-px="' + i + '|act" inputmode="decimal" value="' + esc(r.act) + '"></label></div>' +
+            '<p class="hint prx-or">Or estimate it from a set</p>' +
+            '<div class="rec-grid"><div class="field"><label>Weight, lb<input class="input" data-px="' + i + '|w" inputmode="decimal" value="' + esc(r.w) + '"></label></div>' +
+            '<div class="field"><label>Reps<input class="input" data-px="' + i + '|r" inputmode="numeric" pattern="[0-9]*" value="' + esc(r.r) + '"></label></div></div>' +
+            '<p class="hint prx-orm" id="orm' + i + '">' + ormLine(r) + '</p>') +
+        (r.reps ? '<p class="hint pr-far">Most reps logged in a set: ' + r.reps + '. Beat it for +' + SC.repPoints + '.</p>' : '') + '</div>';
+    }).join('') +
+    '<div class="field"><label>Add an exercise<select class="input" data-prx-add><option value="">Choose one</option>' +
+    SC.exOrder.filter(function (k) { return !used[k]; }).map(function (k) { return '<option value="' + k + '">' + SC.exercises[k].name + (SC.exercises[k].body ? ' (bodyweight)' : '') + '</option>'; }).join('') +
+    '<option value="other">Something else</option></select></label></div>';
+}
+/* Redraws only the strength rows, so times typed above are not lost. */
+function redrawPrLifts() { var el = $('prLifts'); if (el) el.innerHTML = prLiftFields(); }
 /* The email, password and delete forms are plain HTML forms that post to the server.
    No script on this page reads or sends a password. */
 function viewProfile() {
@@ -388,7 +460,7 @@ function viewProfile() {
     '<div class="field"><label for="pwNew">New password</label><input class="input" id="pwNew" name="next" type="password" autocomplete="new-password" minlength="10" required><p class="hint">At least 10 characters.</p></div>' +
     '<button class="btn btn--black" type="submit">Change password</button></form>' +
     '</div><div>' +
-    '<form class="block form-narrow pr-block" id="prForm" novalidate><h2 class="sec">Your PRs</h2><p class="rules-p">Enter these once. For distance, give one distance and your best time for it. They update on their own when you beat them.</p>' +
+    '<form class="block form-narrow pr-block" id="prForm" novalidate><h2 class="sec">Your PRs</h2><p class="rules-p">Enter these once. Your effort bonus is measured against them, and they update on their own when you beat them. If you have never tested one, estimate it from another effort. A tested PR is always used over an estimate. Entering a PR is not a workout: it earns no points and sets no distance or rep record.</p>' +
     prFields() + '<p class="err" id="prErr"></p><button class="btn btn--orange" type="submit">Save PRs</button></form>' +
     '<div class="block"><h2 class="sec">Account</h2><div style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn btn--ghost" data-act="logout">Log out</button>' +
     '<button class="btn btn--ghost danger" data-act="deleteAccount">Delete my account</button></div></div>' +
@@ -494,7 +566,7 @@ function createHTML() {
     }).join('') + '</div></div>' +
     '<div class="field"><span class="lbl">Workouts and their rates</span><div class="cat-list">' + SC.order.map(function (k) {
       var c = SC.cats[k], a = F.rates[k];
-      return '<label class="cat-row"><input type="checkbox" data-cg="on" data-k="' + k + '"' + (a.on ? ' checked' : '') + '><span class="cat-name">' + c.label + '<small>Players enter ' + (c.type === 'dist' ? c.units + ' and time' : 'sets, reps and weight') + '</small></span>' +
+      return '<label class="cat-row"><input type="checkbox" data-cg="on" data-k="' + k + '"' + (a.on ? ' checked' : '') + '><span class="cat-name">' + c.label + '<small>Players enter ' + (c.type === 'dist' ? c.units + ' and time' : 'the exercise, sets, reps and weight') + '</small></span>' +
         '<input class="input" data-cg="rate" data-k="' + k + '" inputmode="decimal" aria-label="' + c.label + ' rate" value="' + esc(a.rate) + '"><span class="cat-per">per ' + (c.type === 'dist' ? c.perLabel : 'rep') + '</span></label>';
     }).join('') + '</div></div>' +
     '<div class="field"><span class="lbl">Invite people</span><p class="hint">Add as many as you like. Each gets an email with the link and the group code. You can invite more later.</p>' + invRows(F.inv) + '</div>' +
@@ -532,14 +604,34 @@ function logBody() {
   var inputs = '';
   if (c && c.type === 'dist') {
     inputs = '<div class="rec-grid rec-grid--time">' + fld('dist', 'Distance, ' + c.units, c.unit === 'mi' ? '3.25' : '') + timeBoxes('data-lg', '', F, 'Time') + '</div><p class="hint rec-line">' +
-      (rec.pace ? 'Your PR: ' + fmtAmt(rec.dist) + ' ' + c.unit + ' in ' + fmtTime(rec.pace * rec.dist / c.per) + ' (' + fmtPace(rec.pace) + ' per ' + c.perLabel + ')' : 'No PR saved. Add one in your profile to earn the pace bonus. Otherwise this workout sets it.') + '</p>';
+      (rec.pace ? 'Your PR: ' + paceText(F.cat, rec.pace) + (rec.actual ? '' : ', estimated') + '.' : 'No PR saved. Add one in your profile to earn the effort bonus. Otherwise this workout sets it.') +
+      (rec.far ? ' Longest logged: ' + fmtAmt(rec.far) + ' ' + c.unit + '.' : '') + '</p>';
   } else if (c) {
-    inputs = '<div class="lift-grid"><span></span><span>Sets</span><span>Reps</span><span>Weight</span><span>Your PR</span>' + Object.keys(SC.lifts).map(function (l) {
-      var n = SC.lifts[l];
-      return '<b>' + n + '</b>' + cell(l + '_s', '5', n + ' sets') + cell(l + '_r', '5', n + ' reps') + cell(l + '_w', 'lb', n + ' weight in pounds') + cell(l + '_pr', 'lb', n + ' PR in pounds');
-    }).join('') + '</div><p class="hint rec-line">Fill in the lifts you did. Your PRs are saved to your profile.</p>';
+    var marks = liftMarks(), mine = Object.keys(marks).filter(function (k) { return !SC.exercises[k]; });
+    inputs = F.lifts.map(function (l, i) {
+      var m = marks[l.ex] || {}, body = l.ex === 'other' ? false : SC.exercises[l.ex] ? !!SC.exercises[l.ex].body : (!m.orm && !!m.best);
+      var opt = function (k, label) { return '<option value="' + esc(k) + '"' + (l.ex === k ? ' selected' : '') + '>' + esc(label) + '</option>'; };
+      var hint = l.ex === 'other' ? 'Leave the weight empty for a bodyweight move.'
+        : body ? (m.best ? 'Your best: ' + m.best + ' in one set.' : 'No best saved. This workout sets it.')
+        : (m.orm ? 'Your 1 rep max: ' + wt(m.orm) + ' lb' + (m.act ? '' : ', estimated') + '.' + (m.reps ? ' Most reps logged in a set: ' + m.reps + '.' : '') : 'No max saved. This set works it out, so there is no effort bonus yet.');
+      return '<div class="lrow"><div class="lrow-top"><select class="input" data-lf="ex" data-i="' + i + '" aria-label="Exercise">' +
+        '<optgroup label="Weighted">' + SC.exOrder.filter(function (k) { return !SC.exercises[k].body; }).map(function (k) { return opt(k, SC.exercises[k].name); }).join('') + '</optgroup>' +
+        '<optgroup label="Bodyweight">' + SC.exOrder.filter(function (k) { return SC.exercises[k].body; }).map(function (k) { return opt(k, SC.exercises[k].name); }).join('') + '</optgroup>' +
+        '<optgroup label="Yours">' + mine.map(function (k) { return opt(k, marks[k].name || k); }).join('') + opt('other', 'Something else') + '</optgroup></select>' +
+        (F.lifts.length > 1 ? '<button type="button" class="icon-btn" data-act="lfRm" data-i="' + i + '" aria-label="Remove exercise">' + ICON.x + '</button>' : '') + '</div>' +
+        (l.ex === 'other' ? '<input class="input lrow-name" data-lf="name" data-i="' + i + '" maxlength="30" placeholder="Exercise name" aria-label="Exercise name" value="' + esc(l.name || '') + '">' : '') +
+        '<div class="lrow-nums' + (body ? ' lrow-nums--2' : '') + '">' +
+        '<label>Sets<input class="input" data-lf="sets" data-i="' + i + '" inputmode="numeric" pattern="[0-9]*" value="' + esc(l.sets || '') + '"></label>' +
+        '<label>Reps<input class="input" data-lf="reps" data-i="' + i + '" inputmode="numeric" pattern="[0-9]*" value="' + esc(l.reps || '') + '"></label>' +
+        (body ? '' : '<label>Weight, lb<input class="input" data-lf="w" data-i="' + i + '" inputmode="decimal" value="' + esc(l.w || '') + '"></label>') +
+        '</div><p class="hint">' + esc(hint) + '</p></div>';
+    }).join('') +
+    (F.lifts.length < SC.maxLiftRows ? '<button type="button" class="btn btn--ghost btn--sm lrow-add" data-act="lfAdd">' + ICON.plus + 'Add another exercise</button>' : '');
   }
-  var canYest = groups.some(function (g) { return yesterday() >= g.start; });
+  // Any day since the challenge started can be picked, for a workout that was not logged at the time.
+  var firstDay = groups.map(function (g) { return g.start; }).sort()[0] || today();
+  var canYest = firstDay <= yesterday(), canPick = firstDay < yesterday();
+  var other = F.pickDay || (F.date !== today() && F.date !== yesterday());
   return modalTop('Log a workout') +
     (many ? '<p class="ok-box" style="margin:0 0 16px">Counts in ' + esc(groups.map(function (g) { return g.name; }).join(' and ')) + '.</p>' : '') +
     '<div class="field"><span class="lbl">What did you finish?</span><div class="pick">' + cats.map(function (k) {
@@ -547,15 +639,21 @@ function logBody() {
       return '<button type="button" data-act="lgCat" data-v="' + k + '" aria-pressed="' + (F.cat === k) + '"><span>' + u.label + '</span>' +
         (r === null ? '' : '<i>' + fmtAmt(r) + '/' + (u.type === 'dist' ? u.unit === 'mi' ? 'mi' : u.perLabel.replace('yards', 'yd').replace('meters', 'm') : 'rep') + '</i>') + '</button>';
     }).join('') + '</div></div>' + inputs + '<div class="prev" id="lgPrev">' + (F.prevHTML || '') + '</div>' +
-    (canYest ? '<div class="field"><span class="lbl">When?</span><div class="seg"><button type="button" data-act="lgDate" data-v="' + today() + '" aria-pressed="' + (F.date === today()) + '">Today</button>' +
-      '<button type="button" data-act="lgDate" data-v="' + yesterday() + '" aria-pressed="' + (F.date === yesterday()) + '">Yesterday</button></div></div>' : '') +
+    (canYest ? '<div class="field"><span class="lbl">When?</span><div class="seg"><button type="button" data-act="lgDate" data-v="' + today() + '" aria-pressed="' + (!other && F.date === today()) + '">Today</button>' +
+      '<button type="button" data-act="lgDate" data-v="' + yesterday() + '" aria-pressed="' + (!other && F.date === yesterday()) + '">Yesterday</button>' +
+      (canPick ? '<button type="button" data-act="lgDay" aria-pressed="' + other + '">Another day</button>' : '') + '</div>' +
+      (canPick && other ? '<input class="input day-pick" type="date" data-lg="date" aria-label="Day of the workout" min="' + firstDay + '" max="' + today() + '" value="' + esc(F.date || '') + '">' +
+        '<p class="hint">Any day from ' + esc(fmtShort(firstDay)) + ' to today.</p>' : '') + '</div>' : '') +
     '<div class="field"><label for="lgNote">Note, if you want one</label><input class="input" id="lgNote" data-lg="note" maxlength="120" value="' + esc(F.note || '') + '"></div>' +
     '<p class="err" id="lgErr">' + esc(F.err || '') + '</p><button class="btn btn--orange btn--block" data-act="lgSubmit"' + (F.busy ? ' disabled' : '') + '>Log workout</button>';
 }
 function logPayload() {
   var c = SC.cats[F.cat], body = { cat: F.cat, date: F.date, note: F.note || '', group: S.g && running(S.g) ? S.gid : undefined };
   if (c.type === 'dist') { body.dist = distText(F.dist); body.time = timeText(F); }
-  else { body.lifts = {}; Object.keys(SC.lifts).forEach(function (l) { body.lifts[l] = { sets: F[l + '_s'], reps: F[l + '_r'], w: F[l + '_w'], pr: F[l + '_pr'] }; }); }
+  else {
+    var marks = liftMarks();
+    body.lifts = F.lifts.map(function (l) { return { ex: l.ex, name: l.ex === 'other' ? l.name : (marks[l.ex] || {}).name, sets: l.sets, reps: l.reps, w: distText(l.w) }; });
+  }
   return body;
 }
 function prevHTML(p) {
@@ -563,9 +661,16 @@ function prevHTML(p) {
   var row = function (a, b, cls) { return '<div class="prev-row' + (cls ? ' ' + cls : '') + '"><span>' + a + '</span><b>' + b + '</b></div>'; };
   return (many ? '<p class="prev-in">In ' + esc(p.group) + '</p>' : '') +
     (c.type === 'dist'
-      ? row(esc(distText(F.dist)) + ' ' + c.unit + ' in ' + esc(fmtTime(p.pace * (parseFloat(distText(F.dist)) || 0) / c.per)), p.base) + (p.hasPr ? row('Pace bonus, ' + fmtPace(p.pace) + ' per ' + c.perLabel, '+' + p.perf) : row('No PR saved, so no pace bonus yet', '+0'))
-      : p.rows.map(function (r) { return row(r.name + ' ' + r.sets + ' x ' + r.reps + ' at ' + r.pct + '% of PR', r.pts); }).join('')) +
-    p.prs.map(function (x) { return row('New PR: ' + esc(x.toLowerCase()), '+' + SC.prPoints, 'prev-pr'); }).join('') +
+      ? row(esc(distText(F.dist)) + ' ' + c.unit + ' in ' + esc(fmtTime(p.pace * (parseFloat(distText(F.dist)) || 0) / c.per)), p.base) +
+        (p.hasPr ? (p.perf ? row('Effort bonus, ' + pct(p.ratio) + ' of your ' + (p.estimated ? 'estimated ' : '') + 'PR pace', '+' + p.perf) : row('Under ' + pct(SC.effortFloor) + ' of your PR pace, so no effort bonus', '+0'))
+          : row(p.setsPr ? 'No PR saved. This workout sets it' : 'No PR saved, so no effort bonus yet', '+0'))
+      : p.rows.map(function (r) {
+        return row(esc(r.name) + ' ' + r.sets + ' x ' + r.reps + (r.body ? '' : ', ' + r.pct + '% of your max a rep'), r.pts) +
+          (r.setsPr ? row(r.body ? 'Sets your best at ' + r.reps + ' in a set' : 'Sets your 1 rep max at ' + wt(r.orm) + ' lb', '+0')
+            : r.bonus ? row('Effort bonus, ' + r.effort + '% of your ' + (r.body ? 'best' : (r.estimated ? 'estimated ' : '') + '1 rep max'), '+' + r.bonus)
+            : row('Under ' + pct(SC.effortFloor) + ' of your ' + (r.body ? 'best' : '1 rep max') + ', so no effort bonus', '+0'));
+      }).join('')) +
+    (p.bonuses || []).map(function (x) { return row('Record: ' + esc(x.label.toLowerCase()), '+' + x.pts, 'prev-pr'); }).join('') +
     (p.streak ? row('Streak, day ' + p.streakDay, '+' + p.streak) : '') + row('Total', '+' + p.total, 'prev-total') +
     (many ? p.groups.slice(1).map(function (g) { return row('Also in ' + esc(g.name) + ', at its rates', '+' + g.total); }).join('') : '');
 }
@@ -582,16 +687,18 @@ function preview() {
   }, 280);
 }
 function openLog() {
-  F = { kind: 'log', cat: '', date: today(), note: '' };
+  F = { kind: 'log', cat: '', date: today(), note: '', lifts: [{ ex: 'squat' }] };
   openModal(logBody(), '', 'Log a workout');
   var first = modal.querySelector('.pick button'); if (first) first.focus();   // not the note box, so a phone keyboard does not open
 }
 function submitLog() {
   if (!F.cat) { F.err = 'Pick the workout you finished.'; modal.innerHTML = logBody(); return; }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(F.date || '')) { F.err = 'Pick the day of the workout.'; modal.innerHTML = logBody(); return; }
+  if (F.date > today()) { F.err = 'That day has not happened yet.'; modal.innerHTML = logBody(); return; }
   F.busy = true; F.err = '';
   api('POST', '/workouts', logPayload()).then(function (p) {
     closeModal();
-    toast((p.prs.length ? 'New PR. ' : 'Logged. ') + (p.groups.length > 1
+    toast((p.prs.length ? 'New record. ' : 'Logged. ') + (p.groups.length > 1
       ? p.groups.map(function (g) { return '+' + g.total + ' in ' + g.name; }).join(', ') + '.'
       : '+' + p.total + ' points.'));
     return loadMe().then(refresh);
@@ -607,7 +714,7 @@ function joinGroup(code) {
     return loadMe().then(refresh).then(connect);
   });
 }
-function setView(v) { if (v !== 'profile') S.flash = null; S.view = v; S.feed = null; S.power = S.view === 'power' ? S.power : null; render(); window.scrollTo(0, 0); loadView().then(render).catch(fail); }
+function setView(v) { if (v !== 'profile') S.flash = null; S.prRows = null; S.view = v; S.feed = null; S.power = S.view === 'power' ? S.power : null; render(); window.scrollTo(0, 0); loadView().then(render).catch(fail); }
 
 document.addEventListener('click', function (e) {
   if (e.target === modalWrap) { closeModal(); return; }
@@ -641,10 +748,16 @@ document.addEventListener('click', function (e) {
     case 'cgSubmit': submitCreate(); break;
     case 'lgCat':
       F.cat = v; F.err = ''; F.prevHTML = '';
-      if (SC.cats[v].type === 'lift') { var r = ME.prs[v] || {}; Object.keys(SC.lifts).forEach(function (l) { if (!F[l + '_pr'] && r[l]) F[l + '_pr'] = String(r[l]); }); }
       modal.innerHTML = logBody(); preview(); break;
-    case 'lgDate': F.date = v; modal.innerHTML = logBody(); preview(); break;
+    case 'lgDate': F.date = v; F.pickDay = false; modal.innerHTML = logBody(); preview(); break;
+    case 'lgDay': F.pickDay = true; modal.innerHTML = logBody(); var dp = modal.querySelector('.day-pick'); if (dp) dp.focus(); break;
     case 'lgSubmit': submitLog(); break;
+    case 'lfAdd': F.lifts.push({ ex: 'bench' }); modal.innerHTML = logBody(); var sel = modal.querySelectorAll('[data-lf="ex"]'); if (sel.length) sel[sel.length - 1].focus(); break;
+    case 'lfRm': F.lifts.splice(i, 1); modal.innerHTML = logBody(); preview(); break;
+    case 'prxRm': prRows().splice(i, 1); redrawPrLifts(); break;
+    case 'prEst':   // show or hide the estimate boxes without redrawing, so nothing typed is lost
+      var box = $('prEst-' + v); if (box) { box.hidden = !box.hidden; el.setAttribute('aria-expanded', String(!box.hidden)); if (!box.hidden) { var fi = box.querySelector('input'); if (fi) fi.focus(); } }
+      break;
     case 'resend': case 'resendAll':
       el.disabled = true;
       api('POST', '/groups/' + S.gid + '/invites/resend', act === 'resend' ? { id: id } : {}).then(function (d) {
@@ -704,9 +817,41 @@ document.addEventListener('input', function (e) {
     if (lg === 'th' || lg === 'tm' || lg === 'ts') { var d = t.value.replace(/[^0-9]/g, ''); if (d !== t.value) t.value = d; }   // digits only
     F[lg] = t.value; if (lg !== 'note') preview();
   }
+  var lf = t.getAttribute('data-lf');
+  if (lf && F && F.lifts && t.tagName === 'INPUT') { F.lifts[+t.getAttribute('data-i')][lf] = t.value; preview(); }
+  var px = t.getAttribute('data-px');
+  if (px && S.prRows) {
+    var pp = px.split('|'), prow = S.prRows[+pp[0]];
+    if (prow) { prow[pp[1]] = t.value; var ol = $('orm' + pp[0]); if (ol) ol.textContent = ormLine(prow); }
+  }
   var prk = t.getAttribute('data-pr');
-  if (prk && /\|t[hms]$/.test(prk)) { var d2 = t.value.replace(/[^0-9]/g, ''); if (d2 !== t.value) t.value = d2; }
+  if (prk && /\|e?t[hms]$/.test(prk)) { var d2 = t.value.replace(/[^0-9]/g, ''); if (d2 !== t.value) t.value = d2; }
+  if (prk) {   // keep the estimate line current as the effort is typed
+    var pk = prk.split('|')[0], line = $('est-' + pk), form = $('prForm');
+    if (line && form) {
+      var val = function (key) { var el = form.querySelector('[data-pr="' + pk + '|' + key + '"]'); return el ? el.value : ''; };
+      var tt = timeText({ th: val('eth'), tm: val('etm'), ts: val('ets') }).split(':'), mins = tt.length === 3 ? (+tt[0]) * 60 + (+tt[1]) + (+tt[2]) / 60 : 0;
+      var tested = SC.cats[pk].speed ? !!distText(val('mph')) : !!timeText({ th: val('th'), tm: val('tm'), ts: val('ts') });
+      line.textContent = estLine(pk, parseFloat(distText(val('edist'))) || 0, mins, tested);
+    }
+  }
 });
+document.addEventListener('change', function (e) {
+  var t = e.target; if (!t.getAttribute) return;
+  if (t.getAttribute('data-lf') === 'ex' && F && F.lifts) {   // a different exercise: the row changes shape
+    var l = F.lifts[+t.getAttribute('data-i')]; l.ex = t.value; if (t.value !== 'other') l.name = '';
+    modal.innerHTML = logBody(); preview();
+    var again = modal.querySelector('[data-lf="' + (t.value === 'other' ? 'name' : 'sets') + '"][data-i="' + t.getAttribute('data-i') + '"]'); if (again) again.focus();
+  }
+  if (t.hasAttribute('data-prx-add') && t.value) {
+    var k = t.value;
+    prRows().push({ k: k, name: k === 'other' ? '' : SC.exercises[k].name, body: k !== 'other' && !!SC.exercises[k].body, act: '', w: '', r: '', best: '', reps: 0 });
+    redrawPrLifts();
+    var boxes = document.querySelectorAll('.prx'), last = boxes[boxes.length - 1];
+    if (last) { var inp = last.querySelector('input'); if (inp) inp.focus(); }
+  }
+});
+
 document.addEventListener('submit', function (e) {
   var id = e.target.id, err;
   if (!id) return;   // forms without an id post straight to the server
@@ -727,8 +872,16 @@ document.addEventListener('submit', function (e) {
     err = $('prErr'); err.textContent = '';
     var prs = {};
     Array.prototype.forEach.call(e.target.querySelectorAll('[data-pr]'), function (inp) { var p = inp.getAttribute('data-pr').split('|'); (prs[p[0]] = prs[p[0]] || {})[p[1]] = inp.value; });
-    Object.keys(prs).forEach(function (k) { if (SC.cats[k].type === 'dist') { prs[k].time = timeText(prs[k]); prs[k].dist = distText(prs[k].dist); } });
-    api('PUT', '/me/prs', { prs: prs }).then(function (d) { ME.prs = d.prs; ME.firstVisit = false; toast('PRs saved.'); }).catch(function (e2) { err.textContent = e2.message; });
+    Object.keys(prs).forEach(function (k) {
+      var f = prs[k];
+      if (SC.cats[k].speed) f.mph = distText(f.mph); else f.time = timeText(f);
+      f.edist = distText(f.edist); f.etime = timeText({ th: f.eth, tm: f.etm, ts: f.ets });
+    });
+    // Strength: every row on the form, plus an empty entry for any that was removed so its PR is cleared.
+    var marks = liftMarks(), rows = prRows(), ex = rows.map(function (r) { return { ex: r.k, name: r.name, act: distText(r.act), w: distText(r.w), r: r.r, best: r.best }; });
+    Object.keys(marks).forEach(function (k) { if (!rows.some(function (r) { return r.k === k; })) ex.push({ ex: k, name: marks[k].name, act: '', w: '', r: '', best: '' }); });
+    prs.lift = { ex: ex };
+    api('PUT', '/me/prs', { prs: prs }).then(function (d) { ME.prs = d.prs; ME.firstVisit = false; S.prRows = null; render(); toast('PRs saved.'); }).catch(function (e2) { err.textContent = e2.message; });
   }
 });
 document.addEventListener('keydown', function (e) {

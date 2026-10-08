@@ -46,7 +46,10 @@ function avatarList() {
 async function loadPrs(userId) {
   const r = await q('SELECT cat, data FROM prs WHERE user_id = $1', [userId]);
   const out = {};
-  for (const row of r.rows) out[row.cat] = row.data;
+  for (const row of r.rows) {   // older records are read into the current shape
+    const c = S.CATS[row.cat];
+    out[row.cat] = !c ? row.data : c.type === 'dist' ? S.distRec(row.cat, row.data) : S.liftRec(row.data);
+  }
   return out;
 }
 async function savePr(run, userId, cat, data) {
@@ -122,7 +125,9 @@ router.get('/me', wrap(async (req, res) => {
   res.json({
     user: { id: req.user.id, fullName: req.user.full_name, email: req.user.email, avatar: req.user.avatar },
     groups: list, unread, prs, firstVisit: !welcomed && !Object.keys(prs).length, avatars: avatarList(), today: S.todayStr(),
-    scoring: { cats: S.CATS, order: S.CAT_ORDER, lifts: S.LIFTS, paceBonus: S.PACE_BONUS, prPoints: S.PR_POINTS, streakStep: S.STREAK_STEP, streakCap: S.STREAK_CAP }
+    scoring: { cats: S.CATS, order: S.CAT_ORDER, exercises: S.EXERCISES, exOrder: S.EX_ORDER, maxLiftRows: S.MAX_LIFT_ROWS,
+      effortBonus: S.EFFORT_BONUS, effortFloor: S.EFFORT_FLOOR, prPoints: S.PR_POINTS, farPoints: S.FAR_POINTS, repPoints: S.REP_POINTS, recordCap: S.RECORD_CAP,
+      streakStep: S.STREAK_STEP, streakCap: S.STREAK_CAP }
   });
 }));
 
@@ -144,19 +149,68 @@ router.post('/me/welcomed', wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
+/* PRs typed into the profile. They set the pace and 1 rep max marks that the effort bonus is measured against.
+   Each one can be tested or estimated, and a tested PR always wins over an estimate.
+   Distance: { time } is the sport's own test (a mile, 100 yards, 500 meters), or { mph } for riding.
+             { edist, etime } is any other effort, which the test time is estimated from.
+   Strength: { ex: [{ ex, name, act, w, r }] }. act is a tested 1 rep max. w and r are a set it is estimated from.
+             Bodyweight moves take { ex, best }: the most reps in one set.
+   They are not workouts: the longest distance and the rep records only come from logged workouts and are kept untouched. */
 router.put('/me/prs', wrap(async (req, res) => {
-  const body = req.body.prs || {};
+  const body = req.body.prs || {}, saved = await loadPrs(req.user.id);
   for (const cat of S.CAT_ORDER) {
     const c = S.CATS[cat], f = body[cat];
     if (!f) continue;
     if (c.type === 'dist') {
-      const hasAny = str(f.dist, 20) || str(f.time, 20);
-      const dist = Math.min(S.num(f.dist), c.max), mins = S.parseTime(f.time);
-      if (hasAny && !(dist && mins)) return bad(res, `For ${c.label}, enter both a distance and a time like 25:00.`);
-      if (dist && mins) await savePr(q, req.user.id, cat, { dist, mins, pace: mins / (dist / c.per) });
+      const next = { far: S.distRec(cat, saved[cat]).far };
+      // tested
+      if (c.speed && str(f.mph, 20)) {
+        const mph = S.num(f.mph);
+        if (!(mph >= 1 && mph <= 60)) return bad(res, `For ${c.label}, enter your best average speed in miles per hour.`);
+        next.actual = 60 / mph;
+      } else if (str(f.time, 20) && !str(f.dist, 20)) {
+        const mins = S.parseTime(f.time);
+        if (!(mins > 0 && mins <= 1440)) return bad(res, `For ${c.label}, enter your ${c.prName.toLowerCase()} time.`);
+        next.actual = mins / (c.test / c.per);
+      }
+      // estimated from another effort. The older { dist, time } shape lands here too.
+      const ed = str(f.edist, 20) || str(f.dist, 20), et = str(f.etime, 20) || (str(f.dist, 20) ? str(f.time, 20) : '');
+      if (ed || et) {
+        const dist = S.num(ed), mins = S.parseTime(et);
+        if (!(dist > 0 && dist <= c.max && mins > 0 && mins <= 2880)) return bad(res, `For ${c.label}, the estimate needs both a distance and a time.`);
+        next.est = { dist, mins, pace: S.estimatePace(cat, dist, mins) };
+      }
+      next.pace = next.actual || (next.est ? next.est.pace : 0);
+      if (!next.far) delete next.far;
+      if (next.pace || next.far) await savePr(q, req.user.id, cat, next);
       else await q('DELETE FROM prs WHERE user_id = $1 AND cat = $2', [req.user.id, cat]);
     } else {
-      await savePr(q, req.user.id, cat, { squat: Math.min(S.num(f.squat), 2000), bench: Math.min(S.num(f.bench), 2000), dead: Math.min(S.num(f.dead), 2000) });
+      const rec = S.liftRec(saved[cat]);
+      const rows = Array.isArray(f.ex) ? f.ex : ['squat', 'bench', 'dead'].filter((k) => f[k] !== undefined).map((k) => ({ ex: k, act: f[k] }));
+      if (rows.length > 40) return bad(res, 'That is too many exercises.');
+      for (const row of rows) {
+        const r0 = row || {}, e = S.readExercise(r0.ex, r0.name);
+        if (!e) { if (S.num(r0.w) || S.num(r0.act) || S.num(r0.best)) return bad(res, 'Type the name of the exercise.'); continue; }
+        const mark = rec.ex[e.k] = rec.ex[e.k] || {};
+        mark.name = e.name;
+        if (e.body) {
+          const best = Math.round(S.num(r0.best));
+          if (best > 100) return bad(res, `For ${e.name}, enter the most reps you have done in one set.`);
+          if (best) mark.best = best; else delete mark.best;
+        } else {
+          let act = S.num(r0.act); const w = S.num(r0.w); let r = Math.round(S.num(r0.r));
+          if (w && !r) r = 1;
+          if (act > 2000 || (w && !(w <= 2000 && r >= 1 && r <= 30))) return bad(res, `For ${e.name}, enter a weight and how many reps you did it for.`);
+          if (w && r === 1 && !act) act = w;                       // a single is a tested max
+          delete mark.act; delete mark.est; delete mark.w; delete mark.r; delete mark.orm;
+          if (act) mark.act = act;
+          if (w && r > 1) { mark.w = w; mark.r = r; mark.est = S.oneRepMax(w, r); }
+          if (mark.act || mark.est) mark.orm = mark.act || mark.est;
+        }
+        if (!mark.orm && !mark.best && !mark.reps) delete rec.ex[e.k];
+      }
+      if (Object.keys(rec.ex).length) await savePr(q, req.user.id, cat, rec);
+      else await q('DELETE FROM prs WHERE user_id = $1 AND cat = $2', [req.user.id, cat]);
     }
   }
   await q('UPDATE users SET welcomed_at = COALESCE(welcomed_at, now()) WHERE id = $1', [req.user.id]);
@@ -405,7 +459,8 @@ router.post('/groups/:id/leave', wrap(async (req, res) => {
 /* ======================= workouts ======================= */
 /* One logged workout counts in every running challenge the person is in.
    Each challenge scores it with its own rates, daily limit and streak. */
-const previewOf = (r) => ({ base: r.sc.base, perf: r.sc.perf, prPts: r.sc.prPts, prs: r.sc.prs, rows: r.sc.rows, pace: r.sc.pace, hasPr: r.sc.hasPr,
+const previewOf = (r) => ({ base: r.sc.base, perf: r.sc.perf, prPts: r.sc.prPts, prs: r.sc.prs, bonuses: r.sc.bonuses, rows: r.sc.rows,
+  pace: r.sc.pace, ratio: r.sc.ratio, hasPr: r.sc.hasPr, setsPr: !!r.sc.setsPr, estimated: !!r.sc.estimated, far: r.sc.far || 0,
   streak: r.streak, streakDay: r.streakDay, total: r.sc.total + r.streak });
 
 /* Scores a workout inside one group: that group's rate, daily limit and streak. */
@@ -440,7 +495,9 @@ async function readLog(req, res, only, prefer) {
   // The player's own calendar day can be a day either side of the server's.
   const date = /^\d{4}-\d{2}-\d{2}$/.test(req.body.date || '') ? req.body.date : today;
   const off = S.dayNum(date) - S.dayNum(today);
-  if (off > 1 || off < -2) { bad(res, 'You can log for today or yesterday.'); return null; }
+  // Any day of the challenge can be logged, in case a workout was forgotten. Days that have not happened yet cannot.
+  if (off > 1) { bad(res, 'That day has not happened yet.'); return null; }
+  if (off < -366) { bad(res, 'That is before the challenge started.'); return null; }
   const groups = (await q(`SELECT g.id, g.name, g.daily_cap, g.rates, g.closed_at, to_char(g.start_date,'YYYY-MM-DD') AS start_date, to_char(g.end_date,'YYYY-MM-DD') AS end_date
                            FROM groups g JOIN memberships m ON m.group_id = g.id
                            WHERE m.user_id = $1 AND m.status = 'active' ORDER BY g.start_date, g.created_at`, [req.user.id])).rows;
@@ -459,6 +516,7 @@ async function readLog(req, res, only, prefer) {
   const prs = await loadPrs(req.user.id);
   const read = S.readWorkout(cat, req.body, prs[cat]);
   if (read.error) { bad(res, read.error); return null; }
+  // Marks only move forward in time: a workout filed under an earlier day is scored against today's marks.
   const x = { cat, date, m: read.m, rec: S.CATS[cat].type === 'lift' ? read.prs : prs[cat] };
   const scored = [];
   for (const g of open) scored.push({ group: g, r: await scoreIn(g, req.user.id, x) });
@@ -519,10 +577,32 @@ router.post('/groups/:id/workouts', wrap(async (req, res) => {
   await saveLog(req, res, found);
 }));
 
+/* The longest distance and the rep records come from logged workouts, so when a workout is removed
+   they are worked out again from what is left. A mistyped 100 mile run does not stay on the books.
+   PR pace and 1 rep max are left alone: the player can correct those in their profile. */
+async function rebuildMarks(userId, cat) {
+  const c = S.CATS[cat]; if (!c) return;
+  const data = (await q('SELECT data FROM prs WHERE user_id = $1 AND cat = $2', [userId, cat])).rows[0];
+  if (!data) return;
+  const rows = (await q('SELECT dist, lifts FROM workouts WHERE user_id = $1 AND cat = $2', [userId, cat])).rows;
+  let next;
+  if (c.type === 'dist') {
+    next = Object.assign(S.distRec(cat, data.data), { far: rows.reduce((n, r) => Math.max(n, r.dist || 0), 0) });
+    if (!next.far) delete next.far;
+    if (!next.far && !next.pace) { await q('DELETE FROM prs WHERE user_id = $1 AND cat = $2', [userId, cat]); return; }
+  } else {
+    next = S.liftRec(data.data);
+    const most = {};
+    for (const r of rows) for (const l of (r.lifts || [])) if (l.q && !l.body) most[l.k] = Math.max(most[l.k] || 0, l.reps);
+    for (const k of Object.keys(next.ex)) { if (most[k]) next.ex[k].reps = most[k]; else delete next.ex[k].reps; }
+  }
+  await savePr(q, userId, cat, next);
+}
+
 /* Removing a workout removes it from every group it counted in. */
 router.delete('/workouts/:wid', wrap(async (req, res) => {
   if (!isUuid(req.params.wid)) return bad(res, 'Workout not found.', 404);
-  const w = (await q('SELECT id, entry_id FROM workouts WHERE id = $1 AND user_id = $2', [req.params.wid, req.user.id])).rows[0];
+  const w = (await q('SELECT id, entry_id, cat FROM workouts WHERE id = $1 AND user_id = $2', [req.params.wid, req.user.id])).rows[0];
   if (!w) return bad(res, 'Workout not found.', 404);
   // Once a challenge is over its results are final.
   const done = await q(`SELECT 1 FROM workouts w JOIN groups g ON g.id = w.group_id
@@ -532,6 +612,7 @@ router.delete('/workouts/:wid', wrap(async (req, res) => {
   const r = w.entry_id
     ? await q('DELETE FROM workouts WHERE entry_id = $1 AND user_id = $2 RETURNING group_id', [w.entry_id, req.user.id])
     : await q('DELETE FROM workouts WHERE id = $1 RETURNING group_id', [w.id]);
+  await rebuildMarks(req.user.id, w.cat);
   r.rows.forEach((row) => tellGroup(row.group_id, 'board'));
   res.json({ ok: true });
 }));

@@ -270,3 +270,39 @@ html.menu-open #dash > *:not(.menu):not(.menu-veil) { filter: blur(12px); pointe
   .glog .btn { width: 100%; min-height: 54px; }
   .gcards { grid-template-columns: 1fr; }
 }
+
+/* picking the day of a workout that was not logged at the time */
+.day-pick { margin-top: 10px; max-width: 260px; min-height: 52px; font: inherit; font-size: 16px; }
+@media (max-width: 699px) { .day-pick { max-width: none; } }
+
+/* ==========================================================================
+   STRENGTH: one card per exercise, in the log form and on the PR form
+   ========================================================================== */
+.lrow, .prx { margin-bottom: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 14px; }
+.lrow-top, .prx-top { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.lrow-top select { flex: 1; min-width: 0; min-height: 48px; font: inherit; font-size: 16px; font-weight: 600; }
+.lrow-name { margin-bottom: 10px; }
+.lrow-nums { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.lrow-nums--2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.lrow-nums label { display: grid; gap: 6px; font-size: 13.5px; font-weight: 600; }
+.lrow-nums .input { min-height: 48px; padding: 0 8px; text-align: center; }
+.lrow .hint { margin: 10px 0 0; }
+.lrow-add { margin-bottom: 14px; }
+.prx-top b { flex: 1; min-width: 0; font-size: 16px; font-weight: 600; }
+.prx-top .icon-btn { flex-shrink: 0; }
+.prx .field { margin-bottom: 0; }
+.prx .rec-grid .field { margin-bottom: 0; }
+.prx .hint { margin: 10px 0 0; }
+.prx-orm { font-weight: 600; color: var(--ink); }
+.pr-one { max-width: 200px; }
+.pr-far { margin: 2px 0 14px; }
+select.input { appearance: auto; }
+@media (max-width: 699px) { .lrow-add { width: 100%; } .pr-one { max-width: none; } }
+
+/* PR form: the estimate that sits next to each tested PR */
+.pr-est-btn { display: inline-block; margin: -4px 0 14px; padding: 6px 0; font-size: 14.5px; text-align: left; }
+.pr-est { margin: 0 0 16px; padding: 14px 14px 4px; border: 1px dashed var(--line); border-radius: 14px; }
+.pr-est[hidden] { display: none; }
+.pr-est .prx-orm { margin: 0 0 12px; }
+.prx-or { margin: 12px 0 8px !important; font-weight: 600; }
+.prx .rec-grid { margin-top: 0; }

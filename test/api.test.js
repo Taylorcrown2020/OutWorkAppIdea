@@ -92,21 +92,38 @@ let pass = 0; const ok = (name, cond) => { assert.ok(cond, name); pass++; consol
   ok('outsider cannot read the group', (await C('GET', '/api/groups/' + gid)).status === 404);
   ok('outsider cannot log to the group', (await C('POST', `/api/groups/${gid}/workouts`, { cat: 'run', dist: 3, time: '30:00' })).status === 404);
 
-  r = await A('PUT', '/api/me/prs', { prs: { run: { dist: '3.1', time: '25:00' } } });
-  ok('PR saved once to profile', r.status === 200 && Math.abs(r.json.prs.run.pace - 25 / 3.1) < 1e-6);
+  r = await A('PUT', '/api/me/prs', { prs: { run: { edist: '26.2', etime: '3:30:00' } } });
+  ok('a marathon time works out an estimated mile', r.status === 200 && Math.abs(r.json.prs.run.pace - 210 * Math.pow(1 / 26.2, 1.06)) < 1e-9 && r.json.prs.run.actual === undefined && Math.abs(r.json.prs.run.pace - 6.588) < 0.01);
+  r = await A('PUT', '/api/me/prs', { prs: { run: { time: '8:03.87', edist: '26.2', etime: '3:30:00' } } });
+  ok('a tested mile wins over the estimate, which is kept', r.status === 200 && Math.abs(r.json.prs.run.pace - 25 / 3.1) < 1e-3 && r.json.prs.run.actual === r.json.prs.run.pace && r.json.prs.run.est.dist === 26.2);
+  r = await A('PUT', '/api/me/prs', { prs: { swim: { edist: '1760', etime: '30:00' }, ride: { edist: '40', etime: '2:30:00' } } });
+  ok('other sports estimate their own test: 100 yards in the pool, 10 miles on the bike', Math.abs(r.json.prs.swim.pace - 30 * Math.pow(100 / 1760, 1.06)) < 1e-9 && Math.abs(r.json.prs.ride.pace - 150 * Math.pow(10 / 40, 1.05) / 10) < 1e-9);
+  await A('PUT', '/api/me/prs', { prs: { swim: {}, ride: {} } });
   r = await A('POST', `/api/groups/${gid}/workouts/preview`, { cat: 'run', dist: '5', time: '45:00' });
-  ok('preview: 50 for miles, 22 pace bonus', r.json.base === 50 && r.json.perf === 22 && r.json.total === 72);
+  ok('preview: 50 for miles, 20 effort bonus at 90% of PR pace', r.json.base === 50 && r.json.perf === 20 && r.json.total === 70);
   ok('category not in challenge refused', (await A('POST', `/api/groups/${gid}/workouts`, { cat: 'swim', dist: '500', time: '10:00' })).status === 400);
   r = await A('POST', `/api/groups/${gid}/workouts`, { cat: 'run', dist: '5', time: '45:00', note: 'before work' });
-  ok('run logged', r.status === 201 && r.json.total === 72);
-  r = await B('POST', `/api/groups/${gid}/workouts`, { cat: 'lift', lifts: { squat: { sets: 5, reps: 5, w: 240, pr: 300 }, bench: { sets: 3, reps: 8, w: 210, pr: 200 } } });
-  ok('strength: 20 + 24 reps, +10 new PR', r.status === 201 && r.json.base === 44 && r.json.prPts === 10 && r.json.total === 54);
-  ok('strength PRs saved and raised', (await B('GET', '/api/me')).json.prs.lift.bench === 210);
-  await B('POST', `/api/groups/${gid}/workouts`, { cat: 'walk', dist: '2', time: '40:00' });
+  ok('run logged', r.status === 201 && r.json.total === 70);
+  // strength: a PR entered as 225 x 5 works out to a 1 rep max of 262.5, and is not a workout
+  r = await B('PUT', '/api/me/prs', { prs: { lift: { ex: [{ ex: 'squat', w: 225, r: 5 }, { ex: 'pullup', best: 10 }, { ex: 'bench', act: 200, w: 185, r: 8 }] } } });
+  ok('PR lift works out a 1 rep max', r.status === 200 && Math.abs(r.json.prs.lift.ex.squat.orm - 262.5) < 1e-6 && r.json.prs.lift.ex.squat.act === undefined && r.json.prs.lift.ex.pullup.best === 10);
+  ok('a tested 1 rep max wins over a higher estimate', r.json.prs.lift.ex.bench.orm === 200 && Math.abs(r.json.prs.lift.ex.bench.est - 185 * (1 + 8 / 30)) < 1e-6);
+  ok('entering a PR does not set a rep record', r.json.prs.lift.ex.squat.reps === undefined);
+  r = await B('POST', `/api/groups/${gid}/workouts/preview`, { cat: 'lift', lifts: [{ ex: 'squat', sets: 1, reps: 4, w: 100 }] });
+  ok('a set under half the 1 rep max earns no effort bonus', r.status === 200 && r.json.perf === 0 && r.json.base === 2);
+  r = await B('POST', `/api/groups/${gid}/workouts`, { cat: 'lift', lifts: [{ ex: 'squat', sets: 5, reps: 4, w: 190 }, { ex: 'pullup', sets: 3, reps: 8 }, { ex: 'other', name: 'Farmer carry', sets: 2, reps: 10, w: 70 }] });
+  // squat 20 reps x 190/262.5 = 14, effort 215.3/262.5 = 82% -> 64% of the bonus = +5. pull ups 24, effort 80% -> +7. carry sets its own max: 20 x 0.75 = 15.
+  ok('strength: reps scaled by load, effort bonus above 50%, a first set earns no record', r.status === 201 && r.json.base === 53 && r.json.perf === 12 && r.json.prPts === 0 && r.json.total === 65);
+  r = await B('GET', '/api/me');
+  ok('the logged workout sets the rep record and a max for the new exercise', r.json.prs.lift.ex.squat.reps === 4 && Math.abs(r.json.prs.lift.ex.x_farmer_carry.orm - 70 * (1 + 10 / 30)) < 1e-6);
+  r = await B('POST', `/api/groups/${gid}/workouts/preview`, { cat: 'lift', lifts: [{ ex: 'squat', sets: 1, reps: 6, w: 230 }, { ex: 'pullup', sets: 1, reps: 11 }] });
+  ok('beating the 1 rep max, the rep record and the bodyweight best all pay', r.json.bonuses.map((x) => x.pts).join() === '10,5,10' && r.json.prPts === 25);
+  ok('lift workout needs an exercise', (await B('POST', `/api/groups/${gid}/workouts/preview`, { cat: 'lift', lifts: [{ ex: 'nope', sets: 1, reps: 1, w: 10 }] })).status === 400);
+  await B('POST', `/api/groups/${gid}/workouts`, { cat: 'walk', dist: '0.5', time: '10:00' });
   ok('daily limit enforced', (await B('POST', `/api/groups/${gid}/workouts`, { cat: 'walk', dist: '1', time: '20:00' })).status === 400);
 
   r = await A('GET', '/api/groups/' + gid);
-  ok('leaderboard ranks by points', r.json.board[0].name === 'Taylor Admin' && r.json.board[0].points === 72 && r.json.board[1].points === 68 && r.json.board[1].behind === 4);
+  ok('leaderboard ranks by points', r.json.board[0].name === 'Taylor Admin' && r.json.board[0].points === 70 && r.json.board[1].points === 69 && r.json.board[1].behind === 1);
   r = await A('GET', `/api/groups/${gid}/power`);
   ok('power rankings project a finish', r.json.rankings.length === 2 && r.json.rankings[0].projected >= r.json.rankings[0].points && r.json.daysLeft === 13);
   r = await A('GET', `/api/groups/${gid}/updates`);
@@ -135,13 +152,28 @@ let pass = 0; const ok = (name, cond) => { assert.ok(cond, name); pass++; consol
   r = await A('GET', `/api/groups/${gid2}/feed?mine=1`);
   ok('second group activity has one workout', r.json.workouts.length === 1);
   await A('DELETE', '/api/workouts/' + r.json.workouts[0].id, {});
-  ok('removing a workout removes it from every group', (await A('GET', '/api/groups/' + gid2)).json.board[0].points === 0 && (await A('GET', '/api/groups/' + gid)).json.board[0].points === 72);
+  ok('removing a workout removes it from every group', (await A('GET', '/api/groups/' + gid2)).json.board[0].points === 0 && (await A('GET', '/api/groups/' + gid)).json.board[0].points === 70);
 
   ok('admin cannot leave a group with other people', (await A('POST', `/api/groups/${gid}/leave`, {})).status === 403);
   ok('admin cannot delete their account mid challenge', (await A.form('/account/delete', { password: 'correct horse 1' })).to.includes('e=del_admin'));
   ok('admin can close a group nobody else is in', (await A('POST', `/api/groups/${gid2}/leave`, {})).json.closed === true);
 
-    // one log goes into every running challenge, with no group named
+    // distance records come from logged workouts only, and are worked out again when one is removed
+  {
+    r = await A('GET', '/api/me');
+    ok('the first run set the longest distance, the typed PR did not', r.json.prs.run.far === 5);
+    ok('a run a little farther is not a record', (await A('POST', `/api/groups/${gid}/workouts/preview`, { cat: 'run', dist: '5.1', time: '50:00' })).json.prPts === 0);
+    ok('a short sprint cannot set the pace PR', (await A('POST', `/api/groups/${gid}/workouts/preview`, { cat: 'run', dist: '0.25', time: '1:00' })).json.prPts === 0);
+    r = await A('POST', `/api/groups/${gid}/workouts`, { cat: 'run', dist: '6', time: '45:00' });
+    ok('farther and faster: longest run and fastest pace both pay', r.status === 201 && r.json.prs.join() === 'Fastest pace,Longest run' && r.json.prPts === 20 && r.json.perf === 30);
+    r = await A('PUT', '/api/me/prs', { prs: { run: { time: '8:03.87' }, ride: { mph: '18.5' }, swim: { time: '1:30' } } });
+    ok('PRs use each sport\'s own test and keep the longest distance', r.status === 200 && r.json.prs.run.far === 6 && Math.abs(r.json.prs.ride.pace - 60 / 18.5) < 1e-9 && Math.abs(r.json.prs.swim.pace - 1.5) < 1e-9);
+    const w0 = (await A('GET', `/api/groups/${gid}/feed?mine=1`)).json.workouts[0];
+    ok('removing it puts the longest distance back', (await A('DELETE', '/api/workouts/' + w0.id, {})).status === 200 && (await A('GET', '/api/me')).json.prs.run.far === 5);
+    await A('PUT', '/api/me/prs', { prs: { run: { time: '8:03.87' }, ride: {}, swim: {} } });
+  }
+
+  // one log goes into every running challenge, with no group named
   const gidM = (await A('POST', '/api/groups', { name: 'Side challenge', days: 7, dailyCap: 0, rates: { walk: 5 } })).json.id;
   r = await A('POST', '/api/workouts/preview', { cat: 'walk', dist: '2', time: '0:40:00' });
   ok('a workout previews in every running challenge at once', r.status === 200 && r.json.groups.length === 2);
@@ -159,12 +191,29 @@ let pass = 0; const ok = (name, cond) => { assert.ok(cond, name); pass++; consol
   ok('and can be logged in on that day', (await A('POST', `/api/groups/${gidE}/workouts/preview`, { cat: 'run', dist: '1', time: '9:00', date: r.json.group.start })).status === 200);
   ok('admin deletes the empty group', (await A('POST', `/api/groups/${gidE}/leave`, {})).status === 200);
 
+  // a forgotten workout can be logged for an earlier day of the challenge, but not before it began or for a day still to come
+  {
+    const day = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
+    r = await A('POST', '/api/groups', { name: 'Back dated', days: 10, dailyCap: 0, rates: { ride: 4 } });
+    const gidD = r.json.id;
+    if (process.env.DATABASE_URL) {
+      const { Client } = require('pg'); const db = new Client({ connectionString: process.env.DATABASE_URL, ssl: false }); await db.connect();
+      await db.query(`UPDATE groups SET start_date = start_date - 6 WHERE id = $1`, [gidD]); await db.end();
+      r = await A('POST', `/api/groups/${gidD}/workouts`, { cat: 'ride', dist: '10', time: '0:40:00', date: day(-5) });
+      ok('a forgotten workout can be logged for an earlier day of the challenge', r.status === 201);
+      ok('and is filed under that day', (await A('GET', `/api/groups/${gidD}/feed?mine=1`)).json.workouts[0].date === day(-5));
+      ok('but not for a day before the challenge began', (await A('POST', `/api/groups/${gidD}/workouts`, { cat: 'ride', dist: '10', time: '0:40:00', date: day(-8) })).status === 400);
+    }
+    ok('or a day that has not happened yet', (await A('POST', `/api/groups/${gidD}/workouts`, { cat: 'ride', dist: '10', time: '0:40:00', date: day(3) })).status === 400);
+    await A('POST', `/api/groups/${gidD}/leave`, {});
+  }
+
   // shutting a challenge down early
   ok('member cannot shut the challenge down', (await B('POST', `/api/groups/${gid}/close`, {})).status === 403);
   r = await A('POST', `/api/groups/${gid}/close`, {});
   ok('admin shuts the challenge down and the leader wins', r.status === 200 && r.json.winner === 'Taylor A. Admin');
   r = await B('GET', '/api/groups/' + gid);
-  ok('standings are frozen and marked over', r.json.group.closed === true && r.json.board[0].points === 72 && r.json.board[1].points === 68);
+  ok('standings are frozen and marked over', r.json.group.closed === true && r.json.board[0].points === 70 && r.json.board[1].points === 69);
   ok('nothing more can be logged', (await A('POST', `/api/groups/${gid}/workouts`, { cat: 'walk', dist: '1', time: '20:00' })).status === 400);
   r = await B('GET', `/api/groups/${gid}/feed?mine=1`);
   ok('logged workouts cannot be removed after the end', (await B('DELETE', '/api/workouts/' + r.json.workouts[0].id, {})).status === 400);

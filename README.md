@@ -71,7 +71,7 @@ Open `public/outwork.js` and search for `PUT YOUR VIDEO HERE`. Put the video fil
    On phones and tablets the tabs sit behind the menu button, the same as the rest of the site.
    The tabs follow the challenge that is open. A running challenge has Leaderboard, Power rankings, Activity and Group. A finished or shut down challenge only has its final results and moves under Past challenges on My groups, where anyone can take it off their own list.
    Someone in one running challenge lands on its leaderboard. Someone in several lands on My groups and picks one. Each challenge is its own card.
-   A logged workout goes into every running challenge it fits, each scored at that challenge's rates. Time is entered as hours, minutes and seconds, and distance takes decimals, so both are stored exactly as typed.
+   A logged workout goes into every running challenge it fits, each scored at that challenge's rates. A workout can be logged for today, yesterday, or any earlier day of the challenge if it was forgotten. Time is entered as hours, minutes and seconds, and distance takes decimals, so both are stored exactly as typed.
    A challenge starts on the creator's own calendar day, not the server's.
 7. Leaving a group is one button on the Group tab. They come off the leaderboard and the ranks adjust.
 8. The admin cannot leave or be removed while other people are in the group. An admin who is alone in a group can delete it.
@@ -92,3 +92,19 @@ All in `server/scoring.js`. Rates per category are in `CATS`. The pace bonus, PR
 - Running more than one server instance. Live updates are held in memory, so a second instance would need a shared channel such as Redis.
 
 See `SECURITY.md` for the security controls and what SOC 2 needs beyond the code.
+
+## Scoring
+
+All of it lives in `server/scoring.js`. The public explanation is `public/scoring.html`, which is written by `public/outwork.js`.
+
+1. The work. Distance times the challenge's rate. Strength reps are scaled by weight against the player's 1 rep max. Bodyweight reps count in full.
+2. Effort bonus. Up to +50% of the work, by how close the workout is to the player's own best. Nothing at 50% of their best or below, climbing evenly to the full bonus at 100%.
+   The best is measured per sport: fastest mile for running and walking, best average speed for riding, fastest 100 yards for swimming, fastest 500 meters for rowing, 1 rep max per exercise for strength, and most reps in one set for bodyweight moves.
+   Each best is either tested or estimated, and a tested one always wins. A distance PR can be estimated from any other effort with Riegel's formula, time x (test distance / distance) ^ 1.06 (1.05 riding, 1.07 rowing): a 3:30 marathon works out to about a 6:35 mile. The riding test is average speed over 10 miles.
+   A 1 rep max is worked out from any lift and its reps: weight x (1 + reps / 30), counting up to 12 reps. Each logged set is measured the same way.
+3. Records. +10 for a new PR pace, a new 1 rep max, or the most bodyweight reps in a set. +10 for the longest distance logged in a sport, beaten by 5% or more. +5 for the most reps logged in a set of a lift. At most 30 record points a workout.
+   The first workout in a sport or exercise sets the marks and earns none. PRs typed into the profile are not workouts: they set pace and 1 rep max only.
+   Removing a workout works the longest distance and rep records out again from what is left.
+4. Streak. +2 for each day in a row, up to +10 a day.
+
+Workouts logged before this change keep the points they earned. Saved PRs carry over: a distance PR keeps its pace, and an old squat, bench or deadlift PR becomes that exercise's 1 rep max.

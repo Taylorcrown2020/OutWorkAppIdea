@@ -89,8 +89,12 @@ var CATS = {
 var CAT_ORDER = ['run', 'walk', 'ride', 'swim', 'row', 'lift'];
 var LIFTS = [['squat', 'Squat'], ['bench', 'Bench'], ['dead', 'Deadlift']];
 
-var PACE_BONUS = 0.5;   // distance workouts: up to +50% at your PR pace
-var PR_POINTS = 10;     // bonus for beating a PR
+var PACE_BONUS = 0.5;   // the effort bonus: up to +50% at your own best
+var EFFORT_FLOOR = 0.5; // nothing below 50% of your best
+var PR_POINTS = 10;     // new PR pace, new 1 rep max, most bodyweight reps
+var FAR_POINTS = 10;    // longest distance yet
+var REP_POINTS = 5;     // most reps in a set yet
+var RECORD_CAP = 30;    // most record points one workout can earn
 var STREAK_STEP = 2;    // streak bonus grows this much for each day in a row
 var STREAK_CAP = 10;    // most streak points a single day can earn
 
@@ -392,7 +396,7 @@ function viewHome(page) {
   var hero = '<header class="band--orange lp-hero">' + bg + '<div class="wrap-w lp-hero-in"><div>' +
     '<h1 class="h-xl"><span class="h-dim">Every workout scores.</span> One person wins.</h1>' +
     '<p class="hero-accent">Group workout challenges with a real finish line.</p>' +
-    '<p class="lede">Start a group and log what you finish. Every mile and every rep scores, with a bonus for pace against your own PR and for streaks. When time runs out, the top score takes it.</p>' +
+    '<p class="lede">Start a group and log what you finish. Every mile and every rep scores, with a bonus for how close you get to your own best, and for streaks. When time runs out, the top score takes it.</p>' +
     '<div class="home-cta"><button class="btn btn--black" data-act="new">Start a challenge</button>' +
     '<button class="btn btn--white" data-act="join">Join with a code</button></div>' +
     '</div>' + reel + '</div></header>';
@@ -431,7 +435,7 @@ function viewHome(page) {
     '<h2 class="h-xl"><span class="h-dim">Three ways to score.</span> One way to win.</h2>' +
     '<div class="quick-grid quick-grid--3">' +
     qk('Rate', 'Do the work', 'Every mile and every rep scores.') +
-    qk('+' + Math.round(PACE_BONUS * 100) + '%', 'Push your pace', 'A bonus for how close you are to your own PR.') +
+    qk('+' + Math.round(PACE_BONUS * 100) + '%', 'Push your limit', 'A bonus for how close you get to your own best.') +
     qk('+' + STREAK_CAP, 'Keep your streak', 'Up to ' + STREAK_CAP + ' a day for days in a row.') +
     '</div><div class="quick-end"><p>Most points when time runs out wins.</p>' +
     '<button class="btn btn--black" data-act="page" data-v="scoring">See how scoring works</button></div>' +
@@ -463,8 +467,8 @@ function viewHome(page) {
         '<div class="mini-kv"><span>Run</span><b>10 per mile</b></div><div class="mini-kv"><span>Swim</span><b>2 per 100 yd</b></div><div class="mini-kv"><span>Strength</span><b>1 per rep</b></div>') +
       tl('Before day one', 'Bring your people', 'Each challenge has a six character code. Anyone with the code joins under the name they want on the leaderboard and enters their PRs once.',
         '<div class="mini-code"><div><small>Challenge code</small><b>K7M2QX</b></div><span>Copy code</span></div>') +
-      tl('Every day', 'Log what you finish', 'Pick the category and enter your numbers: distance and time for a run, walk, ride, swim or row, and sets, reps and weight for strength. You see the points before you submit.',
-        prow('5 mi at 10 per mile', '50') + prow('Pace bonus, 9:00 per mile', '+23') + prow('Streak, day 3', '+4') + prow('Total', '+77', 'prev-total')) +
+      tl('Every day', 'Log what you finish', 'Pick the category and enter your numbers: distance and time for a run, walk, ride, swim or row, and the exercise, sets, reps and weight for strength. You see the points before you submit.',
+        prow('5 mi at 10 per mile', '50') + prow('Effort bonus, 90% of PR pace', '+20') + prow('Streak, day 3', '+4') + prow('Total', '+74', 'prev-total')) +
       tl('All challenge long', 'Watch the board move', 'Standings update for everyone the moment a workout is logged. The feed shows each workout with its math, so nobody wonders where the points came from.',
         raceHTML(['Maya', 'Jordan', 'Chris'])) +
       tl('Final day, midnight', 'One winner', 'Logging closes and the top score wins. A tie goes to whoever reached that score first.',
@@ -472,8 +476,9 @@ function viewHome(page) {
       '</ol></div></section>' +
       '<section class="part"><div class="wrap-w faq"><h2 class="h-lg sec-title">Before you start</h2>' + acc([
         ['Do I need a watch or a fitness tracker?', 'No. You enter your own distance and time, or your sets, reps and weight.'],
-        ['What if someone in our group cannot run?', 'They walk, ride, swim, row or lift. Every category has its own rate, and the pace bonus is measured against each person\'s own PR. A walker near their best pace earns the same bonus as a runner near theirs.'],
+        ['What if someone in our group cannot run?', 'They walk, ride, swim, row or lift. Every category has its own rate, and the effort bonus is measured against each person\'s own best. A walker near their best mile earns the same bonus as a runner near theirs.'],
         ['Do I enter my PRs every time?', 'No. Once. They are saved to your profile and update when you beat them.'],
+        ['What if I do not know my 1 rep max?', 'Enter any lift and the reps you did it for, and it is worked out for you. 225 for 5 works out to 262.5. Or enter nothing and your first logged set works it out.'],
         ['Can we change the rates after we start?', 'No. Rates and categories lock when the challenge begins so nobody can move the goalposts.'],
         ['What happens if I miss a day?', 'Your streak resets and starts again with your next workout. Points you already earned stay.'],
         ['How many workouts count per day?', 'Two by default. Whoever creates the challenge can set it to one, three or no limit.']
@@ -486,26 +491,58 @@ function viewHome(page) {
     var ex = function (who, title, rows, total) {
       return '<div class="ex"><div class="ex-who">' + who + '</div><h3>' + title + '</h3>' + rows + '<div class="prev-row prev-total"><span>Total</span><b>' + total + '</b></div></div>';
     };
-    scoringPage = phero('<span class="h-dim">Three ways to score.</span> That is it.',
-      'Do the work. Push your pace. Keep your streak. The most points when time runs out wins.',
+    var kv = function (a, b) { return '<div class="kv"><span>' + a + '</span><span>' + b + '</span></div>'; };
+    var half = Math.round(EFFORT_FLOOR * 100);
+    scoringPage = phero('<span class="h-dim">Three ways to score.</span> All against your own best.',
+      'Do the work. Push your limit. Keep your streak. The most points when time runs out wins.',
       '<div class="bigcard bigcard--sum" aria-hidden="true"><div class="mini-t">Thursday</div><div class="bc-name">Run, 5 miles</div>' +
-      prow('5 miles at 10 per mile', '50') + prow('Pace bonus', '+23') + prow('Streak, day 3', '+4') + prow('This workout', '77', 'prev-total') + '</div>') +
+      prow('5 miles at 10 per mile', '50') + prow('Effort bonus', '+20') + prow('Streak, day 3', '+4') + prow('This workout', '74', 'prev-total') + '</div>') +
 
       '<section class="part"><div class="wrap-w"><div class="trio">' +
       '<div><b>1</b><h3>Do the work</h3><p>Every mile and every rep scores.</p><div class="rate-list">' +
-      CAT_ORDER.map(function (k) { var c = CATS[k]; return '<div class="kv"><span>' + c.label + '</span><span>' + (c.type === 'dist' ? c.rate + ' per ' + c.perLabel : c.rate + ' per rep') + '</span></div>'; }).join('') +
-      '</div><p class="fine">Strength reps are scaled by weight. A rep at 80% of your PR is worth 0.8.</p></div>' +
-      '<div><b>2</b><h3>Push your pace</h3><p>Distance workouts earn up to +' + pct + '% for pace, measured against your own PR.</p>' +
-      '<div class="rate-list"><div class="kv"><span>At your PR pace</span><span>+' + pct + '%</span></div><div class="kv"><span>At 80% of that speed</span><span>+' + Math.round(pct * 0.8) + '%</span></div><div class="kv"><span>Beat a PR, pace or lift</span><span>+' + PR_POINTS + '</span></div></div></div>' +
+      CAT_ORDER.map(function (k) { var c = CATS[k]; return kv(c.label, c.type === 'dist' ? c.rate + ' per ' + c.perLabel : c.rate + ' per rep'); }).join('') +
+      '</div><p class="fine">Strength reps are scaled by weight. A rep at 80% of your 1 rep max is worth 0.8. Bodyweight reps, like pull ups and push ups, count in full.</p></div>' +
+      '<div><b>2</b><h3>Push your limit</h3><p>Every workout earns up to +' + pct + '% for effort, measured against your own best. Nothing below ' + half + '% of your best.</p>' +
+      '<div class="rate-list">' + kv('At your best', '+' + pct + '%') + kv('At 90% of your best', '+' + Math.round(pct * 0.8) + '%') + kv('At 75% of your best', '+' + Math.round(pct * 0.5) + '%') + kv('At ' + half + '% or less', '+0') + '</div>' +
+      '<p class="fine">Set a new record and you earn extra on top. See records below.</p></div>' +
       '<div><b>3</b><h3>Keep your streak</h3><p>+' + STREAK_STEP + ' for each day in a row, up to +' + STREAK_CAP + ' a day. Miss a day and it restarts.</p>' +
       '<div class="days days--static" aria-hidden="true">' + [0, 1, 2, 3, 4, 5, 5].map(function (n) { return '<i>' + (n ? '+' + streakPts(n + 1) : '') + '</i>'; }).join('') + '</div></div>' +
       '</div></div></section>' +
 
-      '<section class="part"><div class="wrap-w split split--mid"><div><h2 class="h-lg">Enter your PRs once</h2>' +
-      '<p class="body">For running, walking, riding, swimming and rowing, give one distance and your best time for it. For strength, your best squat, bench and deadlift. They are saved to your profile and update whenever you beat them.</p></div>' +
-      '<div class="ex-grid ex-grid--2">' +
-      ex('Distance example', 'Run, 5 miles in 45:00', prow('5 miles at 10 per mile', '50') + prow('Pace at 90% of PR', '+23') + prow('Streak, day 3', '+4'), 77) +
-      ex('Strength example', 'Squat and bench', prow('Squat 5 x 5 at 80% of PR', '20') + prow('Bench 3 x 8 at 75% of PR', '18') + prow('Streak, day 2', '+2'), 40) +
+      '<section class="part"><div class="wrap-w split"><div><h2 class="h-lg">Each sport has its own test</h2>' +
+      '<p class="body">Runners test a mile. Nobody tests a swim or a bike ride that way. So your best is measured the way each sport is actually tested, and your effort bonus is how close a workout comes to it.</p>' +
+      '<p class="body">A workout at your best earns the full +' + pct + '%. One at ' + half + '% of your best, or slower, earns nothing. In between it climbs evenly, so 75% of your best earns half the bonus.</p>' +
+      '<h3 class="rec-h" style="margin-top:34px">Never tested it? Estimate it</h3>' +
+      '<p class="body" style="margin-top:8px">Plenty of people have run a marathon and never raced a mile. Enter any effort you have done, a distance and your time for it, and your test time is worked out from it. A 3:30 marathon works out to about a 6:35 mile. A one mile swim in 30:00 works out to about 1:26 per 100 yards.</p>' +
+      '<p class="body">A PR you have actually tested always wins. Enter your real mile at any time and the estimate stops being used. Log a workout that beats the estimate and that becomes your PR.</p>' +
+      '<p class="fine">Estimates use time x (test distance / distance) ^ 1.06, the standard formula for predicting a time at another distance. Riding uses 1.05 and rowing 1.07.</p></div>' +
+      '<div class="rate-list">' + kv('Run', 'Fastest mile') + kv('Walk or hike', 'Fastest mile') + kv('Ride', 'Best average speed over 10 miles') + kv('Swim', 'Fastest 100 yards') + kv('Row', 'Fastest 500 meters') +
+      kv('Strength, each exercise', '1 rep max') + kv('Pull ups, push ups, dips, sit ups', 'Most reps in one set') + '</div></div></section>' +
+
+      '<section class="part"><div class="wrap-w split"><div><h2 class="h-lg">Your 1 rep max, worked out for you</h2>' +
+      '<p class="body">You do not need to have tested a single. Enter any lift and the reps you did it for. 225 for 5 works out to an estimated 1 rep max of 262.5. If you have tested a true 1 rep max, enter that and it is used over the estimate.</p>' +
+      '<p class="body">Every set you log is measured the same way. 190 for 4 works out to 215, which is 82% of that max, so it earns about two thirds of the effort bonus. Log a set that works out higher than your max and your max moves up.</p>' +
+      '<p class="fine">The estimate is weight x (1 + reps / 30), counting up to 12 reps. If you have no max saved for an exercise, your first logged set works it out, with no effort bonus that day.</p></div>' +
+      '<div><h3 class="rec-h">Log any exercise</h3><p class="body" style="margin-top:8px">Pick the exercise, then enter sets, reps and weight. Squat, bench press, deadlift, overhead press, rows, leg press, lunges, hip thrusts, pulldowns and curls are listed, along with pull ups, chin ups, push ups, dips and sit ups. Anything else, type its name.</p>' +
+      '<p class="body">Each exercise keeps its own max. Up to ' + 8 + ' exercises fit in one workout.</p></div></div></section>' +
+
+      '<section class="part"><div class="wrap-w split"><div><h2 class="h-lg">Records pay extra</h2>' +
+      '<p class="body">Go faster, heavier, farther or longer than you ever have and the workout earns record points on top of everything else. One workout can earn up to ' + RECORD_CAP + ' of them.</p>' +
+      '<div class="rate-list">' + kv('New PR pace', '+' + PR_POINTS) + kv('New 1 rep max', '+' + PR_POINTS) + kv('Most bodyweight reps in a set', '+' + PR_POINTS) +
+      kv('Longest distance you have logged in that sport', '+' + FAR_POINTS) + kv('Most reps in a set you have logged for that lift', '+' + REP_POINTS) + '</div></div>' +
+      '<div><h3 class="rec-h">What counts</h3><ul class="rec-list">' +
+      '<li>The first workout you log in a sport or an exercise sets your marks. It earns no record points.</li>' +
+      '<li>PRs you type into your profile are not workouts. They set your pace and your 1 rep max. They never set your longest distance or your rep record, and they earn no points.</li>' +
+      '<li>A distance record has to beat your longest by 5% or more.</li>' +
+      '<li>A pace PR needs at least the test distance: a mile, 100 yards, 500 meters, or 10 miles on the bike.</li>' +
+      '<li>A set under ' + half + '% of your 1 rep max does not count toward your rep record.</li>' +
+      '<li>Remove a workout and the distance or rep record it set goes with it.</li>' +
+      '</ul></div></div></section>' +
+
+      '<section class="part"><div class="wrap-w"><h2 class="h-lg sec-title">Three workouts, scored</h2><div class="ex-grid">' +
+      ex('Distance', 'Run, 5 miles in 45:00', prow('5 miles at 10 per mile', '50') + prow('Pace at 90% of your fastest mile', '+20') + prow('Streak, day 3', '+4'), 74) +
+      ex('Strength', 'Squat and pull ups', prow('Squat 5 x 4 at 190, max 262.5', '14') + prow('Effort, 82% of your max', '+5') + prow('Pull ups 3 x 8, best is 10', '24') + prow('Effort, 80% of your best', '+7') + prow('Streak, day 2', '+2'), 52) +
+      ex('Record day', 'Run, 6.2 miles in 41:10', prow('6.2 miles at 10 per mile', '62') + prow('Faster than your fastest mile', '+31') + prow('Record: fastest pace', '+10') + prow('Record: longest run', '+10'), 113) +
       '</div></div></section>';
   }
 
@@ -526,7 +563,7 @@ function viewHome(page) {
       }).join('') + '</svg>';
     var fi = function (ini, who, what, meta, brk, pr, pts) {
       return '<div class="feed-item"><div class="av">' + ini + '</div><div><div class="feed-line"><b>' + who + '</b> finished ' + what + '</div><div class="feed-meta">' + meta + '</div><div class="feed-break">' + brk + '</div>' +
-        (pr ? '<div class="feed-pr">New PR: ' + pr + '</div>' : '') + '</div><div class="feed-pts">+' + pts + '</div></div>';
+        (pr ? '<div class="feed-pr">New record: ' + pr + '</div>' : '') + '</div><div class="feed-pts">+' + pts + '</div></div>';
     };
     competePage = phero('<span class="h-dim">Know exactly</span> where you stand.',
       'The board updates the moment anyone logs a workout. So does the pressure.',
@@ -540,8 +577,8 @@ function viewHome(page) {
       '<section class="part"><div class="wrap-w split split--mid"><div><h2 class="h-lg">Every workout shows its math</h2>' +
       '<p class="body">The feed lists each workout as it is logged, with the numbers behind it and how the points broke down. If somebody jumps 60 points overnight, you can see exactly why.</p></div>' +
       '<div class="feedcard" aria-hidden="true">' +
-      fi('MA', 'Maya', 'Run', 'Today, 5 mi in 45:00 (9:00 per mile)', '50 for distance, +23 pace bonus', '', 73) +
-      fi('JO', 'Jordan', 'Swim', 'Today, 1,800 yd in 36:00 (2:00 per 100 yards)', '36 for distance, +18 pace bonus, +10 new PR', 'pace', 64) +
+      fi('MA', 'Maya', 'Run', 'Today, 5 mi in 45:00 (9:00 per mile)', '50 for distance, +20 effort bonus', '', 70) +
+      fi('JO', 'Jordan', 'Swim', 'Today, 1,800 yd in 36:00 (2:00 per 100 yards)', '36 for distance, +18 effort bonus, +10 record', 'fastest pace', 64) +
       fi('SA', 'Sam', 'Strength', 'Today, Squat 5 x 5 at 240 lb, Bench 3 x 8 at 150 lb', '38 for reps', '', 38) +
       '</div></div></section>' +
       '<section class="part"><div class="wrap-w"><div class="sees">' +
@@ -562,9 +599,9 @@ function viewHome(page) {
       '<div class="rule-one" aria-hidden="true"><b>1</b><span>winner. Every time.</span></div>') +
       '<section class="part"><div class="wrap-w rb">' +
       rg('Winning', ['The most points when the challenge ends wins.', 'A tie goes to whoever reached that score first.']) +
-      rg('Logging', ['Log each workout yourself, with your real numbers.', 'You can log for today or yesterday. Nothing older.', 'Only your daily limit of workouts counts. The default is two a day.']) +
-      rg('Scoring', ['Every category scores at its own rate, set when the challenge is created.', 'Rates and categories lock once the challenge starts.', 'Pace bonuses and strength points are measured against your own PRs.']) +
-      rg('Fair play', ['Enter honest PRs. Setting them low on purpose is cheating your friends.', 'Removing a workout removes its points. A PR it set stays, so log carefully.']) +
+      rg('Logging', ['Log each workout yourself, with your real numbers.', 'You can log for today or any earlier day of the challenge. Nothing from before it started.', 'Only your daily limit of workouts counts. The default is two a day.']) +
+      rg('Scoring', ['Every category scores at its own rate, set when the challenge is created.', 'Rates and categories lock once the challenge starts.', 'The effort bonus is measured against your own best: PR pace, 1 rep max or most reps. Under half your best earns none.']) +
+      rg('Fair play', ['Enter honest PRs. Setting them low on purpose is cheating your friends.', 'Removing a workout removes its points and any distance or rep record it set. A PR pace or 1 rep max it set stays, so log carefully.']) +
       '</div></section>';
   }
   var up = page === 'signup';
@@ -639,7 +676,7 @@ function viewHome(page) {
   var mw = function (t, d, v) { return '<div><div><h3>' + t + '</h3><p>' + d + '</p></div><b>' + v + '</b></div>'; };
   var mScore = function (link) {
     return '<section class="m-sec m-sec--orange part--orange ptsec">' + TRACK + '<div class="wrap-w"><h2 class="m-h"><span class="h-dim">Three ways to score.</span> One way to win.</h2><div class="m-ways">' +
-      mw('Do the work', 'Every mile and every rep', 'Rate') + mw('Push your pace', 'Against your own PR', '+' + Math.round(PACE_BONUS * 100) + '%') +
+      mw('Do the work', 'Every mile and every rep', 'Rate') + mw('Push your limit', 'Against your own best', '+' + Math.round(PACE_BONUS * 100) + '%') +
       mw('Keep your streak', 'Per day, for days in a row', '+' + STREAK_CAP) +
       '</div><p class="m-win">Most points when time runs out wins.</p>' +
       (link ? '<button class="btn btn--black" data-act="page" data-v="scoring">See how scoring works</button>' : '') + '</div></section>';
